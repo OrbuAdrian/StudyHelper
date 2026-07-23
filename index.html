@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A client-side study workspace for summaries, exercises, quizzes, and reusable exercise templates." />
+  <title>Study Forge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/tokens.css" />
+  <link rel="stylesheet" href="assets/css/layout.css" />
+  <link rel="stylesheet" href="assets/css/dashboard.css" />
+  <link rel="stylesheet" href="assets/css/components.css" />
+  <link rel="stylesheet" href="assets/css/features.css" />
+  <link rel="stylesheet" href="assets/css/responsive.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mathjs@13.2.0/lib/browser/math.min.js"></script>
+  <script type="module" src="assets/js/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#dashboard" aria-label="Study Forge home">
+        <span class="brand-mark" aria-hidden="true">SF</span>
+        <span><strong>Study Forge</strong><small>Learn with intent</small></span>
+      </a>
+
+      <nav class="nav-list" aria-label="Primary navigation">
+        <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span>Overview</button>
+        <button class="nav-item" data-view="source"><span class="nav-icon">＋</span>Study source</button>
+        <button class="nav-item" data-view="summary"><span class="nav-icon">≡</span>Summary</button>
+        <button class="nav-item" data-view="exercise"><span class="nav-icon">✦</span>Exercise lab</button>
+        <button class="nav-item" data-view="quiz"><span class="nav-icon">✓</span>Quiz builder <span class="nav-count" id="quizNavCount">0</span></button>
+        <button class="nav-item" data-view="library"><span class="nav-icon">▣</span>Library</button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span>Settings</button>
+        <div class="storage-meter">
+          <div class="storage-row"><span>Local workspace</span><strong id="storageLabel">0 KB</strong></div>
+          <div class="meter"><span id="storageBar"></span></div>
+          <small>Saved only in this browser</small>
+        </div>
+      </div>
+    </aside>
+
+    <div class="mobile-scrim" id="mobileScrim"></div>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-button mobile-menu" id="mobileMenuButton" aria-label="Open navigation">☰</button>
+          <div><p class="eyebrow" id="viewEyebrow">Workspace</p><h1 id="viewTitle">Overview</h1></div>
+        </div>
+        <div class="topbar-actions">
+          <label class="topbar-language" aria-label="Interface language">
+            <span>Language</span>
+            <select class="select compact-select" id="interfaceLanguageQuick">
+              <option value="en">English</option>
+              <option value="ro">Română</option>
+            </select>
+          </label>
+          <button class="status-pill" id="apiStatusButton" data-view-jump="settings"><span class="status-dot"></span><span id="apiStatusText">Gemini not connected</span></button>
+          <button class="icon-button" id="themeToggle" aria-label="Toggle color theme">◐</button>
+        </div>
+      </header>
+
+      <div class="content-wrap">
+        <section class="view active" id="view-dashboard" data-title="Overview" data-eyebrow="Workspace">
+          <div class="hero-card">
+            <div class="hero-copy">
+              <span class="section-kicker">Focused learning workspace</span>
+              <h2>Turn any topic into a clear path to mastery.</h2>
+              <p>Bring a topic, TXT file, or PDF. Generate one useful learning item at a time, then refine, practise, and assemble your best exercises into a quiz.</p>
+              <div class="hero-actions"><button class="button primary" data-view-jump="source">Add study material</button><button class="button secondary" data-view-jump="exercise">Open exercise lab</button></div>
+            </div>
+            <div class="hero-visual" aria-hidden="true">
+              <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+              <div class="focus-card focus-card-a"><span>01</span><strong>Understand</strong></div>
+              <div class="focus-card focus-card-b"><span>02</span><strong>Practise</strong></div>
+              <div class="focus-card focus-card-c"><span>03</span><strong>Validate</strong></div>
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <article class="stat-card"><span class="stat-icon lavender">≡</span><div><strong id="summaryCount">0</strong><span>Saved summaries</span></div></article>
+            <article class="stat-card"><span class="stat-icon mint">✦</span><div><strong id="exerciseCount">0</strong><span>Saved exercises</span></div></article>
+            <article class="stat-card"><span class="stat-icon amber">▤</span><div><strong id="templateCount">0</strong><span>Templates</span></div></article>
+            <article class="stat-card"><span class="stat-icon coral">✓</span><div><strong id="attemptCount">0</strong><span>Quiz attempts</span></div></article>
+          </div>
+
+          <div class="dashboard-grid">
+            <article class="panel quick-start-panel">
+              <div class="panel-heading"><div><span class="section-kicker">Start here</span><h3>Choose a study action</h3></div></div>
+              <div class="quick-actions">
+                <button class="quick-action" data-view-jump="summary"><span class="quick-icon lavender">≡</span><span><strong>Create a summary</strong><small>Compress a topic or source into structured notes.</small></span><b>→</b></button>
+                <button class="quick-action" data-view-jump="exercise"><span class="quick-icon mint">✦</span><span><strong>Generate an exercise</strong><small>Use Gemini, a direct prompt, or a reusable template.</small></span><b>→</b></button>
+                <button class="quick-action" data-view-jump="quiz"><span class="quick-icon coral">✓</span><span><strong>Build a quiz</strong><small>Collect generated exercises and control feedback timing.</small></span><b>→</b></button>
+              </div>
+            </article>
+            <article class="panel recent-panel">
+              <div class="panel-heading"><div><span class="section-kicker">History</span><h3>Recent work</h3></div><button class="text-button" data-view-jump="library">View library</button></div>
+              <div id="recentWork" class="empty-state compact"><span>◇</span><strong>No saved work yet</strong><p>Your latest summaries, exercises, and templates will appear here.</p></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-source" data-title="Study source" data-eyebrow="Input">
+          <div class="page-intro"><div><span class="section-kicker">Context first</span><h2>What are you studying?</h2><p>Enter a topic, paste text, or extract text from a TXT or PDF file. This source is shared by the summary and exercise generators.</p></div><span class="context-chip" id="sourceStatusChip">No active source</span></div>
+          <div class="two-column source-layout">
+            <article class="panel">
+              <div class="panel-heading"><div><h3>Topic or text</h3><p>Use a concise topic or provide detailed notes.</p></div></div>
+              <label class="field-label" for="sourceTitle">Source title</label><input class="input" id="sourceTitle" placeholder="e.g. Newton's laws of motion" />
+              <label class="field-label" for="sourceText">Study material</label><textarea class="textarea tall" id="sourceText" placeholder="Enter a topic, paste notes, or load a file…"></textarea>
+              <div class="field-footer"><span id="sourceCharCount">0 characters</span><button class="text-button danger-text" id="clearSourceButton">Clear</button></div>
+              <button class="button primary full" id="useSourceButton">Use this source</button>
+            </article>
+            <article class="panel upload-panel">
+              <div class="panel-heading"><div><h3>Upload a file</h3><p>TXT and PDF files are processed locally in your browser.</p></div></div>
+              <label class="drop-zone" id="dropZone" for="sourceFile"><input type="file" id="sourceFile" accept=".txt,.pdf,text/plain,application/pdf" hidden /><span class="upload-icon">⇧</span><strong>Drop a file here</strong><p>or click to choose a TXT or PDF file</p><small>Large files are trimmed to keep requests manageable.</small></label>
+              <div class="file-progress hidden" id="fileProgress"><div><span id="fileProgressName">Reading file…</span><strong id="fileProgressPercent">0%</strong></div><div class="meter"><span id="fileProgressBar"></span></div></div>
+              <div class="privacy-note"><span>⌁</span><p><strong>Local extraction.</strong> Files are not uploaded by this app. Extracted text is sent to Gemini only when you request AI generation.</p></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-summary" data-title="Summary" data-eyebrow="Understand">
+          <div class="page-intro"><div><span class="section-kicker">One clear output</span><h2>Create a structured summary</h2><p>Gemini is used only when you press Generate. The source remains available for regeneration at a different level.</p></div><span class="context-chip" id="summarySourceChip">No active source</span></div>
+          <div class="workspace-layout">
+            <aside class="panel controls-panel">
+              <h3>Summary settings</h3>
+              <label class="field-label" for="summaryLanguage">Content language</label><select class="select" id="summaryLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
+              <label class="field-label" for="summaryDifficulty">Learning level</label><select class="select" id="summaryDifficulty"><option value="Beginner">Beginner</option><option value="Intermediate" selected>Intermediate</option><option value="Advanced">Advanced</option></select>
+              <label class="field-label" for="summaryStyle">Structure</label><select class="select" id="summaryStyle"><option value="study-guide">Study guide</option><option value="concise">Concise notes</option><option value="concept-map">Concept map outline</option><option value="exam-review">Exam review</option></select>
+              <label class="field-label" for="summaryLength">Depth</label><select class="select" id="summaryLength"><option value="brief">Brief</option><option value="balanced" selected>Balanced</option><option value="detailed">Detailed</option></select>
+              <label class="checkbox-row"><input type="checkbox" id="summaryExamples" checked /><span><strong>Include examples</strong><small>Add short illustrative examples when useful.</small></span></label>
+              <label class="checkbox-row"><input type="checkbox" id="summaryTerms" checked /><span><strong>Key terminology</strong><small>Highlight definitions and important terms.</small></span></label>
+              <button class="button primary full" id="generateSummaryButton">Generate summary</button>
+            </aside>
+            <article class="panel output-panel">
+              <div class="panel-heading"><div><span class="section-kicker">Generated result</span><h3 id="summaryOutputTitle">Your summary will appear here</h3></div><div class="output-actions hidden" id="summaryActions"><button class="icon-text-button" id="copySummaryButton">Copy</button><button class="icon-text-button" id="saveSummaryButton">Save</button><button class="icon-text-button" id="exportSummaryTxtButton">TXT</button><button class="icon-text-button" id="exportSummaryJsonButton">JSON</button></div></div>
+              <div class="output-content empty-state" id="summaryOutput"><span>≡</span><strong>Ready when you are</strong><p>Add or select a study source, configure the summary, and generate one focused set of notes.</p></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-exercise" data-title="Exercise lab" data-eyebrow="Practise">
+          <div class="page-intro"><div><span class="section-kicker">Build and test</span><h2>Create one exercise</h2><p>Generate with Gemini, instantiate a deterministic template, or enter a complete exercise directly.</p></div><span class="context-chip" id="exerciseSourceChip">No active source</span></div>
+          <div class="tab-row" role="tablist"><button class="tab-button active" data-exercise-tab="ai">AI generation</button><button class="tab-button" data-exercise-tab="template">Template engine</button><button class="tab-button" data-exercise-tab="direct">Direct exercise</button></div>
+
+          <div class="exercise-tab active" id="exercise-tab-ai">
+            <div class="workspace-layout">
+              <aside class="panel controls-panel">
+                <h3>Generation settings</h3>
+                <label class="field-label" for="aiExerciseLanguage">Content language</label><select class="select" id="aiExerciseLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
+                <label class="field-label" for="aiExerciseType">Exercise type</label><select class="select" id="aiExerciseType"><option value="multiple-choice">Multiple choice</option><option value="single-answer">Single answer</option><option value="semantic-explanation">Semantic explanation</option><option value="definition">Definition</option><option value="comparison">Comparison</option><option value="reasoning">Reasoning</option><option value="phrase-completion">Phrase completion</option></select>
+                <label class="field-label" for="aiExerciseDifficulty">Difficulty</label><select class="select" id="aiExerciseDifficulty"><option value="Beginner">Beginner</option><option value="Intermediate" selected>Intermediate</option><option value="Advanced">Advanced</option></select>
+                <label class="field-label" for="aiExerciseFocus">Optional focus</label><textarea class="textarea short" id="aiExerciseFocus" placeholder="e.g. conservation of momentum, edge cases, recursion"></textarea>
+                <div id="aiSemanticSettings" class="semantic-settings hidden">
+                  <div class="semantic-heading"><strong>Semantic grading</strong><small>The generated reference answer becomes the authoritative grading standard.</small></div>
+                  <label class="field-label" for="aiSemanticStrictness">Validation strictness</label><select class="select" id="aiSemanticStrictness"><option value="lenient">Lenient</option><option value="moderate" selected>Moderate</option><option value="strict">Strict</option><option value="exacting">Exacting</option></select>
+                  <label class="field-label" for="aiConceptMode">Concept guidance</label><select class="select" id="aiConceptMode"><option value="none">None</option><option value="automatic" selected>Generate from reference answer</option></select>
+                </div>
+                <label class="checkbox-row" id="aiCalculationPreference"><input type="checkbox" id="aiRequireCalculation" /><span><strong>Prefer calculation</strong><small>Ask for a numerical or symbolic solution when suitable.</small></span></label>
+                <button class="button primary full" id="generateAiExerciseButton">Generate exercise</button>
+              </aside>
+              <article class="panel output-panel exercise-output-host" id="aiExerciseHost"></article>
+            </div>
+          </div>
+
+          <div class="exercise-tab" id="exercise-tab-template">
+            <div class="template-grid">
+              <article class="panel template-editor-panel">
+                <div class="panel-heading"><div><h3>Exercise template</h3><p>Use the complete format or only the sections your exercise needs.</p></div><button class="text-button" id="loadExampleTemplateButton">Load complete example</button></div>
+                <label class="field-label" for="templateName">Template name</label><input class="input" id="templateName" placeholder="Asynchronous serial transmission" />
+                <label class="field-label" for="templateText">Template text</label><textarea class="textarea code-editor" id="templateText" spellcheck="false" placeholder="Question with {PLACEHOLDERS}…"></textarea>
+                <div class="template-help"><details><summary>Complete template syntax reference</summary><div class="template-reference">
+                  <p>The text before the first section is the learner-facing question. Insert generated values with <code>{VARIABLE}</code>. Only <strong>Definitions</strong> and <strong>Formula</strong> are required.</p>
+                  <div class="syntax-section"><h4>Supported sections</h4><code>## Metadata</code><code>## Definitions</code><code>## Mappings</code><code>## Formula</code><code>## Constraints</code><code>## Answer</code><code>## Choices</code><code>## Feedback</code></div>
+                  <div class="syntax-section"><h4>Metadata terms</h4><code>TITLE:</code><code>SUBJECT:</code><code>TOPIC:</code><code>TYPE:</code><code>DIFFICULTY:</code><code>SEED:</code><code>TAGS:</code><code>LANGUAGE:</code><code>MAX_CONSTRAINT_ATTEMPTS:</code><p><code>SEED</code> accepts <code>random</code> or an integer from 0 to 4294967295.</p></div>
+                  <div class="syntax-grid">
+                    <div><code>VALUE: description (600)</code><span>Fixed integer, decimal, or text</span></div>
+                    <div><code>VALUE: description (5..8)</code><span>Inclusive integer range</span></div>
+                    <div><code>VALUE: description (1.0..10.0; step=0.5)</code><span>Stepped decimal range</span></div>
+                    <div><code>VALUE: description (even, odd, none)</code><span>Numeric or text set</span></div>
+                    <div><code>MAPPED_VALUE: SOURCE_VALUE</code><span>Mapping header followed by key=value lines</span></div>
+                    <div><code>FRAME_BITS = 1 + DATA_BITS + PARITY_BITS + STOP</code><span>Dependent formula variable</span></div>
+                    <div><code>ANSWER = ...</code><span>Conventional final answer variable</span></div>
+                    <div><code>DATA_BITS &gt; 0</code><span>Constraint; supports ==, !=, &lt;, &lt;=, &gt;, &gt;=, AND, OR, NOT</span></div>
+                  </div>
+                  <div class="syntax-section"><h4>Answer terms</h4><code>VALUE:</code><code>UNIT:</code><code>ROUND:</code><code>TOLERANCE:</code><code>TOLERANCE_TYPE:</code><code>EQUIVALENCE:</code><code>ACCEPT:</code><p>Tolerance types: <code>absolute</code>, <code>percentage</code>. Equivalence: <code>exact</code>, <code>numeric</code>, <code>symbolic</code>, <code>semantic</code>, <code>combined</code>.</p></div>
+                  <div class="syntax-section"><h4>Choices terms</h4><code>CORRECT:</code><code>DISTRACTOR:</code><code>SHUFFLE:</code><p>The section name and terms are reserved for multiple-choice template expansion. Current template generation remains single-answer.</p></div>
+                  <div class="syntax-section"><h4>Feedback terms</h4><code>HINT:</code><code>SOLUTION:</code><code>EXPLANATION:</code><p>Feedback text may include generated or calculated placeholders such as <code>{FRAME_BITS}</code>.</p></div>
+                  <div class="syntax-section"><h4>Formula support</h4><p>Operators: <code>+ - * / % ^ ( )</code>. Constants: <code>PI</code>, <code>E</code>. Functions: <code>abs</code>, <code>round</code>, <code>floor</code>, <code>ceil</code>, <code>min</code>, <code>max</code>, <code>sqrt</code>, <code>pow</code>.</p></div>
+                </div></details></div>
+                <div class="template-validation-tools">
+                  <label class="compact-field" for="templateValidationRuns"><span>Randomized tests</span><select class="select compact-select" id="templateValidationRuns"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label>
+                  <button class="button secondary" id="validateTemplateButton">Validate template</button>
+                </div>
+                <div class="template-validation-result hidden" id="templateValidationResult" aria-live="polite"></div>
+                <div class="button-row"><button class="button primary" id="generateTemplateExerciseButton">Generate instance</button><button class="button secondary" id="saveTemplateButton">Save template</button><button class="button ghost" id="importTemplateButton">Import</button><input type="file" id="templateImportFile" accept=".txt,.json,text/plain,application/json" hidden /></div>
+              </article>
+              <article class="panel output-panel exercise-output-host" id="templateExerciseHost"></article>
+            </div>
+          </div>
+
+          <div class="exercise-tab" id="exercise-tab-direct">
+            <div class="workspace-layout">
+              <article class="panel controls-panel wide-controls">
+                <h3>Define the exercise</h3>
+                <label class="field-label" for="directLanguage">Content language</label><select class="select" id="directLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
+                <label class="field-label" for="directType">Exercise type</label><select class="select" id="directType"><option value="single-answer">Single answer</option><option value="multiple-choice">Multiple choice</option><option value="semantic">Semantic answer</option><option value="definition">Definition</option><option value="comparison">Comparison</option><option value="reasoning">Reasoning</option><option value="phrase-completion">Phrase completion</option></select>
+                <label class="field-label" for="directQuestion">Question</label><textarea class="textarea" id="directQuestion" placeholder="Enter the complete question…"></textarea>
+                <div id="directOptionsWrap" class="hidden"><label class="field-label" for="directOptions">Options, one per line</label><textarea class="textarea short" id="directOptions" placeholder="Option A&#10;Option B&#10;Option C"></textarea></div>
+                <label class="field-label" for="directAnswer" id="directAnswerLabel">Correct answer</label><textarea class="textarea short" id="directAnswer" placeholder="Expected answer or correct option"></textarea>
+                <div id="directSemanticWrap" class="semantic-settings hidden">
+                  <div class="semantic-heading"><strong>Semantic grading</strong><small>The reference answer is authoritative. Gemini judges equivalent wording according to strictness.</small></div>
+                  <label class="field-label" for="directSemanticStrictness">Validation strictness</label><select class="select" id="directSemanticStrictness"><option value="lenient">Lenient</option><option value="moderate" selected>Moderate</option><option value="strict">Strict</option><option value="exacting">Exacting</option></select>
+                  <label class="field-label" for="directConceptMode">Concept guidance</label><select class="select" id="directConceptMode"><option value="none">None</option><option value="automatic">Generate from reference answer</option><option value="manual">Enter manually</option></select>
+                  <div id="directManualConcepts" class="hidden">
+                    <label class="field-label" for="directEssentialConcepts">Essential concepts <span class="muted">(one per line, optional)</span></label><textarea class="textarea short" id="directEssentialConcepts" placeholder="central idea&#10;important relationship"></textarea>
+                    <label class="field-label" for="directSupportingConcepts">Supporting concepts <span class="muted">(one per line, optional)</span></label><textarea class="textarea short" id="directSupportingConcepts" placeholder="additional detail"></textarea>
+                    <label class="field-label" for="directAcceptedExpressions">Accepted expressions <span class="muted">(one per line, optional)</span></label><textarea class="textarea short" id="directAcceptedExpressions" placeholder="equivalent term or phrasing"></textarea>
+                    <label class="field-label" for="directIncorrectClaims">Known incorrect claims <span class="muted">(one per line, optional)</span></label><textarea class="textarea short" id="directIncorrectClaims" placeholder="common misconception"></textarea>
+                  </div>
+                  <div class="semantic-api-note">Semantic exercises become ungradable when Gemini is unavailable.</div>
+                </div>
+                <div id="directKeywordsWrap"><label class="field-label" for="directKeywords">Required keywords <span class="muted">(comma-separated, optional)</span></label><input class="input" id="directKeywords" placeholder="force, mass, acceleration" /></div>
+                <label class="field-label" for="directHint">Hint <span class="muted">(optional)</span></label><input class="input" id="directHint" placeholder="A small clue for the learner" />
+                <label class="field-label" for="directExplanation">Explanation <span class="muted">(optional)</span></label><textarea class="textarea short" id="directExplanation" placeholder="Explain why the answer is correct…"></textarea>
+                <button class="button primary full" id="createDirectExerciseButton">Create exercise</button>
+              </article>
+              <article class="panel output-panel exercise-output-host" id="directExerciseHost"></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-quiz" data-title="Quiz builder" data-eyebrow="Validate">
+          <div class="page-intro"><div><span class="section-kicker">Randomized assessment</span><h2>Build a multi-problem quiz</h2><p>Add as many problem slots as needed. For every slot, choose one or more saved exercises; one candidate is selected randomly whenever the quiz starts.</p></div><div class="button-row"><button class="button secondary" id="addQuizProblemButton">Add problem</button><button class="button primary" id="startQuizButton">Start quiz</button></div></div>
+          <div class="quiz-layout">
+            <article class="panel quiz-list-panel"><div class="panel-heading"><div><h3>Quiz problems</h3><p><span id="quizItemCount">0</span> problem slots in the current quiz</p></div><button class="text-button danger-text" id="clearQuizButton">Clear all</button></div><div id="quizBuilderList" class="empty-state"><span>✓</span><strong>Your quiz has no problems</strong><p>Save exercises to the library, then add a problem and select its candidate pool.</p></div></article>
+            <aside class="panel controls-panel">
+              <h3>Quiz settings</h3>
+              <label class="field-label" for="quizTitle">Quiz title</label><input class="input" id="quizTitle" value="Practice session" />
+              <label class="field-label" for="quizFeedbackTiming">Feedback timing</label><select class="select" id="quizFeedbackTiming"><option value="immediate">After each problem</option><option value="end">At the end</option></select>
+              <label class="field-label" for="quizFeedbackDepth">Feedback detail</label><select class="select" id="quizFeedbackDepth"><option value="correctness">Correct or incorrect only</option><option value="hint">Include hint</option><option value="answer">Show correct answer</option><option value="explanation">Full explanation</option></select>
+              <label class="checkbox-row"><input type="checkbox" id="quizShuffle" /><span><strong>Shuffle problems</strong><small>Randomize the resolved problem order when the quiz begins.</small></span></label>
+              <button class="button secondary full" id="saveQuizButton">Save quiz</button><div class="divider"></div><button class="button ghost full" id="exportQuizTxtButton">Export quiz as TXT</button><button class="button ghost full" id="exportQuizJsonButton">Export quiz as JSON</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-library" data-title="Library" data-eyebrow="Saved work">
+          <div class="page-intro"><div><span class="section-kicker">Your browser workspace</span><h2>Review and reuse saved material</h2><p>All items remain on this device until you export or clear them.</p></div><button class="button secondary" id="exportWorkspaceButton">Export workspace</button></div>
+          <div class="tab-row library-tabs" role="tablist"><button class="tab-button active" data-library-tab="summaries">Summaries</button><button class="tab-button" data-library-tab="exercises">Exercises</button><button class="tab-button" data-library-tab="templates">Templates</button><button class="tab-button" data-library-tab="quizzes">Quizzes</button><button class="tab-button" data-library-tab="attempts">Attempts</button></div>
+          <div class="panel library-panel"><div id="libraryContent"></div></div>
+        </section>
+
+        <section class="view" id="view-settings" data-title="Settings" data-eyebrow="Configuration">
+          <div class="page-intro"><div><span class="section-kicker">Connection and data</span><h2>Configure your workspace</h2><p>The application is fully client-side. Your settings and saved work are stored in this browser.</p></div></div>
+          <div class="settings-grid">
+            <article class="panel">
+              <div class="panel-heading"><div><h3>Gemini API</h3><p>Required only for AI generation and semantic validation.</p></div><span class="status-badge disconnected" id="settingsApiBadge">Not connected</span></div>
+              <label class="field-label" for="apiKeyInput">API key</label><div class="password-row"><input class="input" type="password" id="apiKeyInput" autocomplete="off" placeholder="Paste your Gemini API key" /><button class="icon-button inset" id="toggleApiKeyButton" aria-label="Show or hide API key">◉</button></div>
+              <label class="checkbox-row warning-choice"><input type="checkbox" id="rememberApiKey" /><span><strong>Remember API key</strong><small>Stores the key in localStorage on this device. This is convenient, but not appropriate for a public or shared computer.</small></span></label>
+              <label class="field-label" for="geminiModel">Model</label><select class="select" id="geminiModel"><option value="gemini-2.5-flash">Gemini 2.5 Flash</option><option value="gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option></select>
+              <div class="button-row"><button class="button primary" id="saveApiSettingsButton">Save settings</button><button class="button secondary" id="testApiButton">Test connection</button></div>
+              <div class="security-note"><span>!</span><p><strong>Client-side limitation:</strong> any key used directly by a browser can be inspected by someone with access to that browser session. Use a restricted Gemini key and monitor its quota.</p></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h3>Answer validation</h3><p>Choose how open-ended answers are checked.</p></div></div>
+              <label class="radio-card"><input type="radio" name="validationMode" value="combined" checked /><span><strong>Combined</strong><small>Use local checks for deterministic answers. Semantic exercises always use Gemini when available.</small></span></label>
+              <label class="radio-card"><input type="radio" name="validationMode" value="local" /><span><strong>Local only</strong><small>Use exact, numeric, expression-equivalence, and keyword checks without API calls. Semantic exercises remain ungradable.</small></span></label>
+              <label class="field-label" for="numericTolerance">Numeric tolerance</label><input class="input" type="number" id="numericTolerance" min="0" step="0.000001" value="0.0001" />
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h3>Language settings</h3><p>Choose the interface language and the default language for newly generated content.</p></div></div>
+              <label class="field-label" for="interfaceLanguage">Interface language</label><select class="select" id="interfaceLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
+              <label class="field-label" for="defaultContentLanguage">Default content language</label><select class="select" id="defaultContentLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
+              <div class="language-note">Saved summaries and exercises keep their own language. A quiz may contain exercises in both languages.</div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h3>Local data</h3><p>Import, export, or clear this browser workspace.</p></div><strong id="settingsStorageSize">0 KB</strong></div>
+              <div class="data-actions"><button class="button secondary full" id="importWorkspaceButton">Import workspace JSON</button><input type="file" id="workspaceImportFile" accept=".json,application/json" hidden /><button class="button secondary full" id="settingsExportWorkspaceButton">Export workspace JSON</button><button class="button danger full" id="clearWorkspaceButton">Clear saved workspace</button></div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="quizModal" role="dialog" aria-modal="true" aria-labelledby="quizModalTitle">
+    <div class="modal quiz-modal-card"><div class="modal-header"><div><span class="section-kicker" id="quizProgressLabel">Problem 1 of 1</span><h2 id="quizModalTitle">Practice session</h2></div><button class="icon-button" id="closeQuizModalButton" aria-label="Close quiz">×</button></div><div class="quiz-progress"><span id="quizProgressBar"></span></div><div class="modal-body" id="quizPlayerBody"></div><div class="modal-footer"><button class="button secondary" id="quizPreviousButton">Previous</button><div class="footer-spacer"></div><button class="button primary" id="quizSubmitButton">Submit answer</button><button class="button primary hidden" id="quizNextButton">Next problem</button></div></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle"><div class="modal confirm-card"><div class="modal-body"><span class="confirm-icon">!</span><h2 id="confirmTitle">Are you sure?</h2><p id="confirmMessage">This action cannot be undone.</p><div class="button-row centered"><button class="button secondary" id="confirmCancelButton">Cancel</button><button class="button danger" id="confirmAcceptButton">Continue</button></div></div></div></div>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+</body>
+</html>

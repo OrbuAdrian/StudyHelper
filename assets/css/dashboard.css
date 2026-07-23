@@ -1,0 +1,278 @@
+/* Study Forge: Dashboard */
+
+.hero-card {
+  position:relative;
+  min-height:330px;
+  overflow:hidden;
+  display:grid;
+  grid-template-columns:1.15fr .85fr;
+  align-items:center;
+  padding:44px 48px;
+  border-radius:var(--radius-lg);
+  color:#fff;
+  background:radial-gradient(circle at 72% 25%,rgba(255,255,255,.14),transparent 28%),linear-gradient(130deg,#312c6a 0%,#574ac3 52%,#745fd9 100%);
+  box-shadow:0 24px 60px rgba(67,54,151,.18)
+}
+
+.hero-copy {
+  position:relative;
+  z-index:2;
+  max-width:650px
+}
+
+.hero-card .section-kicker {
+  color:rgba(255,255,255,.68)
+}
+
+.hero-card h2 {
+  max-width:620px;
+  margin:9px 0 14px;
+  font-size:clamp(34px,4.2vw,56px);
+  line-height:1.06;
+  letter-spacing:-.055em
+}
+
+.hero-card p {
+  max-width:580px;
+  margin-bottom:24px;
+  color:rgba(255,255,255,.76);
+  font-size:16px
+}
+
+.hero-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px
+}
+
+.hero-card .button.primary {
+  color:#40369b;
+  background:#fff;
+  box-shadow:none
+}
+
+.hero-card .button.secondary {
+  color:#fff;
+  background:rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.26)
+}
+
+.hero-visual {
+  position:relative;
+  height:260px;
+  min-width:340px
+}
+
+.orbit {
+  position:absolute;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:50%
+}
+
+.orbit-one {
+  width:275px;
+  height:275px;
+  right:4%;
+  top:-8px
+}
+
+.orbit-two {
+  width:190px;
+  height:190px;
+  right:14%;
+  top:38px
+}
+
+.focus-card {
+  position:absolute;
+  min-width:154px;
+  padding:14px 17px;
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:15px;
+  background:rgba(255,255,255,.13);
+  box-shadow:0 16px 40px rgba(22,18,71,.18);
+  backdrop-filter:blur(8px)
+}
+
+.focus-card span {
+  display:block;
+  color:rgba(255,255,255,.55);
+  font-size:11px;
+  font-weight:700
+}
+
+.focus-card strong {
+  font-family:"Manrope";
+  font-size:16px
+}
+
+.focus-card-a {
+  right:8%;
+  top:14px;
+  transform:rotate(2deg)
+}
+
+.focus-card-b {
+  right:37%;
+  top:100px;
+  transform:rotate(-4deg)
+}
+
+.focus-card-c {
+  right:3%;
+  bottom:10px;
+  transform:rotate(3deg)
+}
+
+.stats-grid {
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:14px;
+  margin:18px 0
+}
+
+.stat-card {
+  display:flex;
+  align-items:center;
+  gap:14px;
+  min-height:96px;
+  padding:17px 19px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--surface);
+  box-shadow:var(--shadow-sm)
+}
+
+.stat-icon,.quick-icon {
+  flex:0 0 auto;
+  width:44px;
+  height:44px;
+  display:grid;
+  place-items:center;
+  border-radius:13px;
+  font-size:20px
+}
+
+.lavender {
+  color:var(--primary)!important;
+  background:var(--primary-soft)!important
+}
+
+.mint {
+  color:var(--mint)!important;
+  background:var(--mint-soft)!important
+}
+
+.amber {
+  color:var(--amber)!important;
+  background:var(--amber-soft)!important
+}
+
+.coral {
+  color:var(--coral)!important;
+  background:var(--coral-soft)!important
+}
+
+.stat-card strong,.stat-card span {
+  display:block
+}
+
+.stat-card strong {
+  font-family:"Manrope";
+  font-size:24px;
+  line-height:1.2
+}
+
+.stat-card div span {
+  color:var(--muted);
+  font-size:12px
+}
+
+.dashboard-grid {
+  display:grid;
+  grid-template-columns:1.1fr .9fr;
+  gap:18px
+}
+
+.panel {
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--surface);
+  box-shadow:var(--shadow-sm);
+  padding:24px
+}
+
+.panel-heading {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:20px
+}
+
+.panel-heading h3,.panel h3 {
+  margin:0;
+  font-size:17px;
+  letter-spacing:-.025em
+}
+
+.panel-heading p {
+  margin:4px 0 0;
+  color:var(--muted);
+  font-size:13px
+}
+
+.section-kicker {
+  color:var(--primary);
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.14em;
+  text-transform:uppercase
+}
+
+.quick-actions {
+  display:grid;
+  gap:8px
+}
+
+.quick-action {
+  display:flex;
+  align-items:center;
+  gap:13px;
+  width:100%;
+  min-height:76px;
+  padding:12px 14px;
+  border:1px solid transparent;
+  border-radius:13px;
+  background:transparent;
+  cursor:pointer;
+  text-align:left;
+  transition:.18s
+}
+
+.quick-action:hover {
+  border-color:var(--line);
+  background:var(--surface-2)
+}
+
+.quick-action span:nth-child(2) {
+  flex:1
+}
+
+.quick-action strong,.quick-action small {
+  display:block
+}
+
+.quick-action strong {
+  margin-bottom:2px
+}
+
+.quick-action small {
+  color:var(--muted);
+  font-size:12px
+}
+
+.quick-action b {
+  color:var(--muted);
+  font-size:18px
+}

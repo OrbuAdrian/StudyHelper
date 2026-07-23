@@ -1,0 +1,283 @@
+/* Study Forge: Layout */
+
+.app-shell {
+  min-height:100vh
+}
+
+.sidebar {
+  position:fixed;
+  inset:0 auto 0 0;
+  z-index:30;
+  width:var(--sidebar-width);
+  display:flex;
+  flex-direction:column;
+  padding:22px 16px;
+  background:var(--surface);
+  border-right:1px solid var(--line)
+}
+
+.brand {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:2px 8px 24px;
+  color:inherit;
+  text-decoration:none
+}
+
+.brand-mark {
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border-radius:13px;
+  color:#fff;
+  background:linear-gradient(140deg,#7b6ef2,#5748d2);
+  font-family:"Manrope";
+  font-weight:800;
+  letter-spacing:-.04em;
+  box-shadow:0 10px 22px rgba(101,88,232,.25)
+}
+
+.brand strong,.brand small {
+  display:block
+}
+
+.brand strong {
+  font-size:16px;
+  letter-spacing:-.02em
+}
+
+.brand small {
+  color:var(--muted);
+  font-size:11px;
+  margin-top:1px
+}
+
+.nav-list {
+  display:grid;
+  gap:5px
+}
+
+.nav-item {
+  border:0;
+  background:transparent;
+  width:100%;
+  display:flex;
+  align-items:center;
+  gap:11px;
+  min-height:44px;
+  padding:0 12px;
+  border-radius:11px;
+  color:var(--muted);
+  font-weight:600;
+  cursor:pointer;
+  text-align:left;
+  transition:.18s
+}
+
+.nav-item:hover {
+  color:var(--text);
+  background:var(--surface-2)
+}
+
+.nav-item.active {
+  color:var(--primary);
+  background:var(--primary-soft)
+}
+
+.nav-item:active {
+  transform:translateY(1px)
+}
+
+.nav-icon {
+  width:22px;
+  text-align:center;
+  font-size:18px
+}
+
+.nav-count {
+  margin-left:auto;
+  min-width:21px;
+  height:21px;
+  display:grid;
+  place-items:center;
+  border-radius:999px;
+  background:var(--surface-3);
+  font-size:11px;
+  color:var(--muted)
+}
+
+.nav-item.active .nav-count {
+  color:var(--primary);
+  background:rgba(101,88,232,.12)
+}
+
+.sidebar-bottom {
+  margin-top:auto
+}
+
+.storage-meter {
+  border-top:1px solid var(--line);
+  margin-top:12px;
+  padding:18px 8px 3px
+}
+
+.storage-row {
+  display:flex;
+  justify-content:space-between;
+  color:var(--muted);
+  font-size:12px
+}
+
+.storage-row strong {
+  color:var(--text)
+}
+
+.storage-meter small {
+  display:block;
+  margin-top:7px;
+  color:var(--muted);
+  font-size:11px
+}
+
+.meter {
+  height:5px;
+  overflow:hidden;
+  margin-top:9px;
+  border-radius:999px;
+  background:var(--surface-3)
+}
+
+.meter span {
+  display:block;
+  height:100%;
+  width:0;
+  border-radius:inherit;
+  background:var(--primary);
+  transition:width .3s
+}
+
+.main-area {
+  min-height:100vh;
+  margin-left:var(--sidebar-width)
+}
+
+.topbar {
+  position:sticky;
+  top:0;
+  z-index:20;
+  min-height:82px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  padding:15px 30px;
+  background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid color-mix(in srgb,var(--line) 72%,transparent)
+}
+
+.topbar-left {
+  display:flex;
+  align-items:center;
+  gap:12px
+}
+
+.topbar h1 {
+  margin:0;
+  font-size:22px;
+  letter-spacing:-.035em
+}
+
+.eyebrow {
+  margin:0 0 1px;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.12em;
+  text-transform:uppercase
+}
+
+.topbar-actions {
+  display:flex;
+  align-items:center;
+  gap:10px
+}
+
+.icon-button {
+  width:40px;
+  height:40px;
+  display:grid;
+  place-items:center;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:var(--surface);
+  color:var(--muted);
+  cursor:pointer;
+  transition:.18s
+}
+
+.icon-button:hover {
+  color:var(--text);
+  border-color:var(--line-strong);
+  background:var(--surface-2)
+}
+
+.mobile-menu {
+  display:none
+}
+
+.status-pill {
+  min-height:40px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:0 13px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:var(--surface);
+  color:var(--muted);
+  font-size:12px;
+  font-weight:600;
+  cursor:pointer
+}
+
+.status-dot {
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#a8aab8;
+  box-shadow:0 0 0 4px rgba(168,170,184,.12)
+}
+
+.status-pill.connected .status-dot {
+  background:#2da27f;
+  box-shadow:0 0 0 4px rgba(45,162,127,.14)
+}
+
+.content-wrap {
+  max-width:1480px;
+  margin:0 auto;
+  padding:28px 30px 54px
+}
+
+.view {
+  display:none;
+  animation:viewIn .25s ease both
+}
+
+.view.active {
+  display:block
+}
+
+@keyframes viewIn {
+  from {
+    opacity:0;
+    transform:translateY(5px)
+  }
+  to {
+    opacity:1;
+    transform:none
+  }
+}

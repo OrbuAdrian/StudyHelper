@@ -1,0 +1,102 @@
+/* Study Forge: Tokens */
+
+:root {
+  --bg: #f5f6fb;
+  --surface: #fff;
+  --surface-2: #f8f8fc;
+  --surface-3: #eff0f6;
+  --text: #1c1d2a;
+  --muted: #6e7082;
+  --line: #e3e4ec;
+  --line-strong: #d3d5df;
+  --primary: #6558e8;
+  --primary-strong: #5547d5;
+  --primary-soft: #eeebff;
+  --mint: #2b9d7d;
+  --mint-soft: #e5f7f1;
+  --amber: #c37a18;
+  --amber-soft: #fff3dc;
+  --coral: #d65c65;
+  --coral-soft: #ffeaec;
+  --danger: #c93f4b;
+  --danger-soft: #ffeaec;
+  --shadow-sm: 0 1px 2px rgba(28,29,42,.05), 0 5px 18px rgba(28,29,42,.035);
+  --shadow-lg: 0 24px 70px rgba(28,29,42,.16);
+  --radius: 16px;
+  --radius-lg: 24px;
+  --sidebar-width: 248px;
+  color-scheme: light;
+}
+
+body[data-theme="dark"] {
+  --bg:#111219;
+  --surface:#191a23;
+  --surface-2:#20212c;
+  --surface-3:#282a36;
+  --text:#f2f2f7;
+  --muted:#a6a8b7;
+  --line:#30323f;
+  --line-strong:#414351;
+  --primary:#887df4;
+  --primary-strong:#9a90ff;
+  --primary-soft:#292541;
+  --mint-soft:#17362f;
+  --amber-soft:#3c2d17;
+  --coral-soft:#3d2227;
+  --danger-soft:#3f2025;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.18),0 7px 24px rgba(0,0,0,.14);
+  --shadow-lg:0 28px 80px rgba(0,0,0,.4);
+  color-scheme:dark;
+}
+
+* {
+  box-sizing:border-box
+}
+
+html {
+  scroll-behavior:smooth
+}
+
+body {
+  margin:0;
+  min-width:320px;
+  background:var(--bg);
+  color:var(--text);
+  font-family:"DM Sans",system-ui,sans-serif;
+  font-size:15px;
+  line-height:1.55
+}
+
+button,input,textarea,select {
+  font:inherit
+}
+
+button {
+  color:inherit
+}
+
+button,a {
+  -webkit-tap-highlight-color:transparent
+}
+
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible {
+  outline:3px solid rgba(101,88,232,.22);
+  outline-offset:2px
+}
+
+h1,h2,h3,h4,p {
+  margin-top:0
+}
+
+h1,h2,h3,.brand strong {
+  font-family:"Manrope","DM Sans",sans-serif
+}
+
+.hidden {
+  display:none!important
+}
+
+.muted {
+  color:var(--muted);
+  font-weight:400
+}
