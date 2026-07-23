@@ -139,3 +139,8 @@ CSS is loaded in dependency order:
 5. Coordinate the feature from `app.js`.
 6. Extend state migration when the stored schema changes.
 7. Add a browser-independent test under `tests/`.
+
+
+## Multi-answer template exercises
+
+Template-generated exercises may include `## Answers`. The template engine resolves each configured answer variable, stores the full list in `answerItems`, and keeps the first answer in the legacy `answer` field for compatibility. The UI renders one input per answer item, validates each response independently, and reports partial credit. Quiz attempts preserve object-shaped answer submissions for these exercises.

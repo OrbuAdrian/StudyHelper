@@ -25,7 +25,7 @@ Open `http://localhost:8080` in a modern browser.
 - Lenient, moderate, strict, and exacting semantic validation.
 - Optional concept guidance entered manually or derived by Gemini from the reference answer.
 - Semantic questions become ungradable—not incorrect—when Gemini is unavailable.
-- Template Format v1.1 with seeds, constraints, stepped decimal ranges, mappings, answer settings, highlighting, validation, and calculation traces.
+- Template Format v1.1 with seeds, constraints, stepped decimal ranges, mappings, single-answer and multi-answer settings, highlighting, validation, and calculation traces.
 - Quiz blueprints with unlimited problem slots and independent random candidate pools.
 - Mixed-language quizzes.
 - Local browser persistence and TXT/JSON export.
@@ -85,6 +85,7 @@ Question text with {PLACEHOLDERS}
 ## Formula
 ## Constraints
 ## Answer
+## Answers
 ## Choices
 ## Feedback
 ```
@@ -97,7 +98,7 @@ Important features include:
 - expanded mappings;
 - Boolean constraints;
 - constraint-aware generation retries;
-- answer rounding, tolerance, equivalence, alternatives, and units;
+- answer rounding, tolerance, equivalence, alternatives, units, and optional multi-answer fields;
 - dependency-based value highlighting;
 - template validation and calculation traces.
 

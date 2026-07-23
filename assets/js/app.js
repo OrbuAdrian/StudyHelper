@@ -521,6 +521,17 @@ function generateTemplateExercise() {
         answerUnit: result.answerUnit,
         answerConfig: result.answerConfig,
         acceptedAnswers: result.acceptedAnswers,
+        answerItems: Array.isArray(result.answers) && result.answers.length > 1
+          ? result.answers.map(item => ({
+              id: item.id,
+              label: item.label,
+              answer: item.formattedAnswer || formatAnswer(item.answer),
+              rawAnswer: item.answer,
+              answerUnit: item.answerUnit,
+              answerConfig: item.answerConfig,
+              acceptedAnswers: item.acceptedAnswers || []
+            }))
+          : [],
         requiredKeywords: [],
         hint: result.feedback.hint || 'Use the highlighted values and the supplied formula rules.',
         explanation: result.explanation,
@@ -725,14 +736,41 @@ function splitLines(value) {
   return String(value || '').split(/\r?\n/).map(item => item.trim()).filter(Boolean);
 }
 
+
+function hasMultipleAnswers(exercise) {
+  return Array.isArray(exercise?.answerItems) && exercise.answerItems.length > 1;
+}
+
+function renderAnswerInputs(exercise, { radioName = 'answer', savedAnswer = '', semantic = false } = {}) {
+  if (exercise.type === 'multiple-choice') {
+    return `<div class="option-list">${(exercise.options || []).map(option => `<label class="option-card"><input type="radio" name="${escapeAttr(radioName)}" value="${escapeAttr(option)}" ${savedAnswer === option ? 'checked' : ''}><span>${escapeHtml(option)}</span></label>`).join('')}</div>`;
+  }
+
+  if (hasMultipleAnswers(exercise)) {
+    const saved = savedAnswer && typeof savedAnswer === 'object' ? savedAnswer : {};
+    return `<div class="multi-answer-list">${exercise.answerItems.map((item, index) => `<label class="multi-answer-field"><span>${escapeHtml(item.label || `Answer ${index + 1}`)}</span><textarea class="textarea" data-role="answer-input" data-answer-id="${escapeAttr(item.id || String(index))}" placeholder="Enter this answer…">${escapeHtml(saved[item.id] || '')}</textarea></label>`).join('')}</div>`;
+  }
+
+  return `<textarea class="textarea" data-role="answer-input" placeholder="${semantic ? 'Write the most valid answer you can…' : 'Enter your answer…'}">${escapeHtml(typeof savedAnswer === 'string' ? savedAnswer : '')}</textarea>`;
+}
+
+function formatAnswerKey(exercise) {
+  if (!hasMultipleAnswers(exercise)) return `${isSemanticExercise(exercise) ? 'Reference answer' : 'Answer'}: ${exercise.answer}`;
+  return ['Answers:', ...exercise.answerItems.map((item, index) => `${index + 1}. ${item.label || `Answer ${index + 1}`}: ${item.answer}`)].join('
+');
+}
+
 function renderExerciseCard(exercise, host) {
     host.innerHTML = '';
     const wrapper = document.createElement('div');
     wrapper.className = 'exercise-card';
     const semantic = isSemanticExercise(exercise);
-    const optionHtml = exercise.type === 'multiple-choice'
-      ? `<div class="option-list">${exercise.options.map(option => `<label class="option-card"><input type="radio" name="exercise-answer-${escapeAttr(exercise.id)}" value="${escapeAttr(option)}"><span>${escapeHtml(option)}</span></label>`).join('')}</div>`
-      : `<textarea class="textarea" data-role="answer-input" placeholder="${semantic ? 'Write the most valid answer you can…' : 'Enter your answer…'}"></textarea>`;
+    const multiAnswer = hasMultipleAnswers(exercise);
+    const optionHtml = renderAnswerInputs(exercise, {
+      radioName: `exercise-answer-${escapeAttr(exercise.id)}`,
+      savedAnswer: '',
+      semantic
+    });
     const variableHtml = !exercise.questionSegments && exercise.variables
       ? `<div class="exercise-variable-list">${Object.entries(exercise.variables).filter(([key]) => key !== 'ANSWER').map(([key, value]) => `<span>${escapeHtml(key)} = ${escapeHtml(formatAnswer(value))}</span>`).join('')}</div>`
       : '';
@@ -754,7 +792,7 @@ function renderExerciseCard(exercise, host) {
     host.appendChild(wrapper);
     wrapper.querySelector('[data-action="check"]').addEventListener('click', () => checkExerciseAnswer(exercise, wrapper));
     wrapper.querySelector('[data-action="hint"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', exercise.hint || 'No hint was supplied for this exercise.'));
-    wrapper.querySelector('[data-action="solution"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', `${semantic ? 'Reference answer' : 'Answer'}: ${exercise.answer}${exercise.explanation ? `\n\n${exercise.explanation}` : ''}`));
+    wrapper.querySelector('[data-action="solution"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', `${multiAnswer ? formatAnswerKey(exercise) : `${semantic ? 'Reference answer' : 'Answer'}: ${exercise.answer}`}${exercise.explanation ? `\n\n${exercise.explanation}` : ''}`));
     wrapper.querySelector('[data-action="trace"]')?.addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', exercise.explanation || 'No calculation trace is available.'));
     wrapper.querySelector('[data-action="save"]').addEventListener('click', () => saveExercise(exercise));
     wrapper.querySelector('[data-action="quiz"]').addEventListener('click', () => addExerciseToQuiz(exercise));
@@ -805,7 +843,10 @@ function renderCalculationTraceHtml(trace) {
 
     const constraints = (trace.constraints || []).map(item => `<div class="trace-step"><span>${item.passed ? 'PASS' : 'FAIL'}</span><code>${escapeHtml(item.expression)}</code><code>${escapeHtml(item.substitutedExpression || '')}</code><strong>${item.passed ? 'true' : 'false'}</strong></div>`).join('');
     const seedInfo = trace.seed === undefined ? '' : `<div class="trace-seed"><span>Seed <strong>${escapeHtml(trace.seed)}</strong></span><span>Accepted attempt <strong>${escapeHtml(trace.attempt || 1)}</strong></span></div>`;
-    return `<div class="calculation-trace">${seedInfo}<section><h5>Generated inputs</h5><div class="trace-inputs">${inputs || '<p>No input definitions.</p>'}</div></section>${mappings ? `<section><h5>Mappings</h5><div class="trace-steps">${mappings}</div></section>` : ''}<section><h5>Formula evaluation</h5><div class="trace-steps">${assignments || '<p>No assignments.</p>'}</div></section>${constraints ? `<section><h5>Constraints</h5><div class="trace-steps">${constraints}</div></section>` : ''}<div class="trace-answer"><span>Final answer</span><strong>${escapeHtml(trace.formattedAnswer || formatAnswer(trace.answer))}</strong></div></div>`;
+    const answerHtml = Array.isArray(trace.answerDetails) && trace.answerDetails.length > 1
+      ? `<div class="trace-answer multi-trace-answer"><span>Final answers</span>${trace.answerDetails.map(item => `<strong>${escapeHtml(item.label || item.valueVariable)}: ${escapeHtml(item.formattedAnswer || formatAnswer(item.answer))}</strong>`).join('')}</div>`
+      : `<div class="trace-answer"><span>Final answer</span><strong>${escapeHtml(trace.formattedAnswer || formatAnswer(trace.answer))}</strong></div>`;
+    return `<div class="calculation-trace">${seedInfo}<section><h5>Generated inputs</h5><div class="trace-inputs">${inputs || '<p>No input definitions.</p>'}</div></section>${mappings ? `<section><h5>Mappings</h5><div class="trace-steps">${mappings}</div></section>` : ''}<section><h5>Formula evaluation</h5><div class="trace-steps">${assignments || '<p>No assignments.</p>'}</div></section>${constraints ? `<section><h5>Constraints</h5><div class="trace-steps">${constraints}</div></section>` : ''}${answerHtml}</div>`;
   }
 
 async function checkExerciseAnswer(exercise, wrapper) {
@@ -819,6 +860,13 @@ async function checkExerciseAnswer(exercise, wrapper) {
 
 function getAnswerFromExerciseUI(exercise, wrapper) {
     if (exercise.type === 'multiple-choice') return wrapper.querySelector(`input[name="exercise-answer-${CSS.escape(exercise.id)}"]:checked`)?.value || '';
+    if (hasMultipleAnswers(exercise)) {
+      const values = {};
+      wrapper.querySelectorAll('[data-role="answer-input"][data-answer-id]').forEach(input => {
+        values[input.dataset.answerId] = input.value.trim();
+      });
+      return Object.values(values).some(Boolean) ? values : '';
+    }
     return wrapper.querySelector('[data-role="answer-input"]')?.value.trim() || '';
   }
 function showExerciseFeedback(wrapper, type, message) { const feedback = wrapper.querySelector('[data-role="feedback"]'); feedback.className = `answer-feedback ${type}`; feedback.textContent = message; }
@@ -978,7 +1026,7 @@ function exportQuizTxt() {
         `${index + 1}. ${exercise.question}`,
         ...(exercise.options?.length ? exercise.options.map((option, optionIndex) => `   ${String.fromCharCode(65 + optionIndex)}. ${option}`) : []),
         '',
-        `Answer: ${exercise.answer}`,
+        ...(hasMultipleAnswers(exercise) ? formatAnswerKey(exercise).split('\n') : [`Answer: ${exercise.answer}`]),
         exercise.explanation ? `Explanation: ${exercise.explanation}` : '',
         ''
       ])
@@ -1021,9 +1069,11 @@ function renderQuizPlayer() {
     els.quizModalTitle.textContent = quiz.title;
     els.quizProgressLabel.textContent = t('problemOf', language, { current: index + 1, total: quiz.exercises.length });
     els.quizProgressBar.style.width = `${((index + 1) / quiz.exercises.length) * 100}%`;
-    const answersHtml = exercise.type === 'multiple-choice'
-      ? `<div class="option-list">${exercise.options.map(option => `<label class="option-card"><input type="radio" name="quiz-answer" value="${escapeAttr(option)}" ${response.answer === option ? 'checked' : ''}><span>${escapeHtml(option)}</span></label>`).join('')}</div>`
-      : `<textarea class="textarea" id="quizAnswerInput" placeholder="Enter your answer…">${escapeHtml(response.answer || '')}</textarea>`;
+    const answersHtml = renderAnswerInputs(exercise, {
+      radioName: 'quiz-answer',
+      savedAnswer: response.answer,
+      semantic: isSemanticExercise(exercise)
+    });
     const feedbackClass = !response.result
       ? 'hidden'
       : response.result.gradable === false
@@ -1047,7 +1097,18 @@ function closeQuizModal() { els.quizModal.classList.add('hidden'); document.body
 function saveCurrentQuizResponse() {
     if (!quizSession || quizSession.completed) return '';
     const exercise = quizSession.quiz.exercises[quizSession.index];
-    const answer = exercise.type === 'multiple-choice' ? els.quizPlayerBody.querySelector('input[name="quiz-answer"]:checked')?.value || '' : els.quizPlayerBody.querySelector('#quizAnswerInput')?.value.trim() || '';
+    let answer;
+    if (exercise.type === 'multiple-choice') {
+      answer = els.quizPlayerBody.querySelector('input[name="quiz-answer"]:checked')?.value || '';
+    } else if (hasMultipleAnswers(exercise)) {
+      answer = {};
+      els.quizPlayerBody.querySelectorAll('[data-role="answer-input"][data-answer-id]').forEach(input => {
+        answer[input.dataset.answerId] = input.value.trim();
+      });
+      if (!Object.values(answer).some(Boolean)) answer = '';
+    } else {
+      answer = els.quizPlayerBody.querySelector('[data-role="answer-input"]')?.value.trim() || '';
+    }
     quizSession.responses[quizSession.index].answer = answer; return answer;
   }
 
@@ -1103,7 +1164,7 @@ function renderQuizResults() {
     els.quizPlayerBody.innerHTML = `<div class="empty-state compact"><span>✓</span><strong>${escapeHtml(t('gradedScore', language, { correct, graded, ungradable }))}</strong><p>${escapeHtml(graded ? t('scoredPercent', language, { percentage }) : t('noApiSemantic', language))}</p></div><div>${quiz.exercises.map((exercise, index) => {
       const response = responses[index];
       const resultClass = response.result?.gradable === false ? 'ungradable' : response.result?.correct ? 'correct' : 'incorrect';
-      return `<div class="answer-feedback ${resultClass}"><strong>${index + 1}. ${escapeHtml(truncate(exercise.question, 110))}</strong><br>${escapeHtml(t('yourAnswer', language))}: ${escapeHtml(response.answer || t('noAnswer', language))}<br>${escapeHtml(formatFeedbackForDepth(exercise, response.result || { gradable: true, correct: false }, quiz.feedbackDepth))}</div>`;
+      return `<div class="answer-feedback ${resultClass}"><strong>${index + 1}. ${escapeHtml(truncate(exercise.question, 110))}</strong><br>${escapeHtml(t('yourAnswer', language))}: ${escapeHtml(formatUserAnswer(response.answer) || t('noAnswer', language))}<br>${escapeHtml(formatFeedbackForDepth(exercise, response.result || { gradable: true, correct: false }, quiz.feedbackDepth))}</div>`;
     }).join('')}</div>`;
     els.quizPreviousButton.classList.add('hidden');
     els.quizSubmitButton.classList.add('hidden');
@@ -1112,10 +1173,27 @@ function renderQuizResults() {
     scheduleInterfaceTranslation();
   }
 
+
+function formatUserAnswer(answer) {
+  if (!answer) return '';
+  if (typeof answer === 'object') {
+    return Object.entries(answer)
+      .map(([key, value]) => `${key}: ${value || '—'}`)
+      .join('; ');
+  }
+  return String(answer);
+}
+
 function formatFeedbackForDepth(exercise, result, depth) {
     const language = state.settings.uiLanguage || 'en';
     if (result.gradable === false) return result.message || t('noApiSemantic', language);
     const status = result.correct ? t('correct', language) : t('incorrect', language);
+    if (result.method === 'multi-answer') {
+      if (depth === 'correctness') return `${status} ${result.score} of ${result.total} answers correct.`;
+      const details = result.parts.map((part, index) => `${index + 1}. ${part.label}: ${part.correct ? t('correct', language) : `${t('incorrect', language)} Expected: ${part.expected}`}`).join(' ');
+      if (depth === 'hint') return `${status} ${result.score} of ${result.total} correct.${exercise.hint ? ` Hint: ${exercise.hint}` : ''}`;
+      return `${status} ${result.score} of ${result.total} correct. ${details}${depth === 'full' && exercise.explanation ? ` Explanation: ${exercise.explanation}` : ''}`;
+    }
     if (depth === 'correctness') return status;
     if (depth === 'hint') return `${status}${exercise.hint ? ` Hint: ${exercise.hint}` : ''}`;
     if (depth === 'answer') return `${status} ${isSemanticExercise(exercise) ? t('referenceAnswer', language) : 'Correct answer'}: ${exercise.answer}`;
@@ -1130,6 +1208,55 @@ function formatFeedbackForDepth(exercise, result, depth) {
   }
 
 async function evaluateAnswer(exercise, userAnswer) {
+    if (hasMultipleAnswers(exercise)) return evaluateMultipleAnswers(exercise, userAnswer);
+    return evaluateSingleAnswer(exercise, userAnswer);
+  }
+
+async function evaluateMultipleAnswers(exercise, userAnswer) {
+    const answers = userAnswer && typeof userAnswer === 'object' ? userAnswer : {};
+    const parts = [];
+
+    for (let index = 0; index < exercise.answerItems.length; index += 1) {
+      const item = exercise.answerItems[index];
+      const provided = answers[item.id] || '';
+      const result = await evaluateSingleAnswer({
+        ...exercise,
+        type: 'single-answer',
+        validationKind: 'deterministic',
+        answer: item.answer,
+        rawAnswer: item.rawAnswer,
+        answerUnit: item.answerUnit,
+        answerConfig: item.answerConfig || exercise.answerConfig,
+        acceptedAnswers: item.acceptedAnswers || []
+      }, provided);
+      parts.push({
+        id: item.id,
+        label: item.label || `Answer ${index + 1}`,
+        expected: item.answer,
+        provided,
+        ...result
+      });
+    }
+
+    const correct = parts.filter(part => part.correct).length;
+    const total = parts.length;
+    const missing = parts.filter(part => !part.provided).length;
+    return {
+      gradable: true,
+      correct: correct === total,
+      score: correct,
+      total,
+      missing,
+      parts,
+      method: 'multi-answer',
+      message: [
+        `${correct} of ${total} answers correct.`,
+        ...parts.map((part, index) => `${index + 1}. ${part.label}: ${part.correct ? 'Correct' : 'Incorrect'}${part.correct ? '' : ` — expected ${part.expected}`}`)
+      ].join('\n')
+    };
+  }
+
+async function evaluateSingleAnswer(exercise, userAnswer) {
     const expected = String(exercise.answer ?? '').trim();
     const provided = String(userAnswer ?? '').trim();
     if (!provided) return { gradable: true, correct: false, message: 'No answer was provided.', method: 'empty' };

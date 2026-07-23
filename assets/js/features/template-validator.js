@@ -50,6 +50,7 @@ function runStaticChecks(parsed, issues) {
   const placeholders = extractPlaceholders(parsed.sections.question);
   const placeholderSet = new Set(placeholders);
   const answerDependencies = resolveAnswerDependencies(parsed);
+  const answerVariables = new Set((parsed.answerConfigs || [parsed.answerConfig]).map(config => config?.valueVariable).filter(Boolean));
   const requiredDefinitions = parsed.definitions
     .map(item => item.name)
     .filter(name => answerDependencies.has(name));
@@ -65,8 +66,8 @@ function runStaticChecks(parsed, issues) {
       issues.push(issue('error', 'undefined-placeholder', `Placeholder {${name}} is not defined and is not produced by a formula.`));
       return;
     }
-    if (name === parsed.answerVariable) {
-      issues.push(issue('error', 'answer-exposed', `{${name}} exposes the expected answer inside the exercise question.`));
+    if (answerVariables.has(name)) {
+      issues.push(issue('error', 'answer-exposed', `{${name}} exposes an expected answer inside the exercise question.`));
     } else if (assignmentNames.has(name) || mappedOutputNames.has(name)) {
       issues.push(issue('warning', 'derived-value-exposed', `{${name}} is a calculated value. Showing it may remove a required solution step.`));
     }
@@ -180,11 +181,17 @@ function runStaticChecks(parsed, issues) {
     });
   });
 
-  if (!parsed.answerVariable) {
+  const configuredAnswers = parsed.answerConfigs || [parsed.answerConfig];
+  if (!configuredAnswers.length || !configuredAnswers.some(config => config?.valueVariable)) {
     issues.push(issue('error', 'missing-answer', 'No final answer variable is configured.'));
-  } else if (!available.has(parsed.answerVariable)) {
-    issues.push(issue('error', 'unknown-answer-variable', `Answer VALUE refers to unknown variable ${parsed.answerVariable}.`));
   }
+  configuredAnswers.forEach(config => {
+    if (!config?.valueVariable) {
+      issues.push(issue('error', 'missing-answer', 'An answer entry is missing its value variable.'));
+    } else if (!available.has(config.valueVariable)) {
+      issues.push(issue('error', 'unknown-answer-variable', `Answer ${config.label || config.valueVariable} refers to unknown variable ${config.valueVariable}.`));
+    }
+  });
 
   parsed.assignments.forEach(assignment => {
     if (!answerDependencies.has(assignment.name)) issues.push(issue(
@@ -202,7 +209,7 @@ function runStaticChecks(parsed, issues) {
     ));
   });
 
-  if (!parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
+  if ((parsed.answerConfigs || []).length === 1 && !parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
     issues.push(issue(
       'warning',
       'implicit-answer',
@@ -216,17 +223,19 @@ function runStaticChecks(parsed, issues) {
     'The final answer does not depend on any randomized or fixed input definition.'
   ));
 
-  if (!['absolute', 'percentage'].includes(parsed.answerConfig.toleranceType)) issues.push(issue(
-    'error',
-    'invalid-tolerance-type',
-    'TOLERANCE_TYPE must be absolute or percentage.'
-  ));
+  (parsed.answerConfigs || [parsed.answerConfig]).forEach(config => {
+    if (!['absolute', 'percentage'].includes(config.toleranceType)) issues.push(issue(
+      'error',
+      'invalid-tolerance-type',
+      `${config.label || config.valueVariable}: TOLERANCE_TYPE must be absolute or percentage.`
+    ));
 
-  if (!['exact', 'numeric', 'symbolic', 'semantic', 'combined'].includes(parsed.answerConfig.equivalence)) issues.push(issue(
-    'error',
-    'invalid-equivalence',
-    'EQUIVALENCE must be exact, numeric, symbolic, semantic, or combined.'
-  ));
+    if (!['exact', 'numeric', 'symbolic', 'semantic', 'combined'].includes(config.equivalence)) issues.push(issue(
+      'error',
+      'invalid-equivalence',
+      `${config.label || config.valueVariable}: EQUIVALENCE must be exact, numeric, symbolic, semantic, or combined.`
+    ));
+  });
 }
 
 function runTrialChecks(parsed, runs, issues) {

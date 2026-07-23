@@ -102,11 +102,50 @@ Exercise text
 ## Formula
 ## Constraints
 ## Answer
+## Answers
 ## Choices
 ## Feedback
 ```
 
-Only the exercise text, `## Definitions`, and `## Formula` are required. Unknown sections are ignored with a validator warning.
+`## Answer` configures one expected answer. `## Answers` is optional and is used when one exercise requires several answer fields. Only the exercise text, `## Definitions`, and `## Formula` are required. Unknown sections are ignored with a validator warning.
+
+## Multiple answers
+
+Use `## Answers` when one exercise asks the learner to solve several related tasks. Each listed variable becomes its own answer box and is graded independently. The older `## Answer` section still works for ordinary single-answer templates.
+
+Simple form:
+
+```text
+## Answers
+
+FRAME_BITS
+TOTAL_FRAMES
+TIME_SECONDS
+```
+
+Labeled form with per-answer settings:
+
+```text
+## Answers
+
+FRAME_BITS:
+LABEL: Bits per frame
+ROUND: 0
+
+TOTAL_FRAMES:
+LABEL: Number of frames
+ROUND: 0
+
+TIME_SECONDS:
+LABEL: Transmission time
+UNIT: seconds
+ROUND: 2
+TOLERANCE: 0.01
+TOLERANCE_TYPE: absolute
+EQUIVALENCE: numeric
+```
+
+When `## Answers` is present, the first answer is still exposed through the legacy `answer` field for compatibility, while the full list is stored in `answerItems`. Feedback shows partial credit such as `2 of 3 answers correct`.
 
 ## Exercise text and placeholders
 

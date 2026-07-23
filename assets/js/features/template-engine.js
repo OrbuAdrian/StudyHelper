@@ -9,7 +9,7 @@ const ALLOWED_FUNCTIONS = [
 const CONSTANTS = { PI: Math.PI, E: Math.E };
 const KNOWN_SECTIONS = new Set([
   'metadata', 'definitions', 'mappings', 'formula', 'constraints',
-  'answer', 'choices', 'feedback'
+  'answer', 'answers', 'choices', 'feedback'
 ]);
 
 export function parseTemplate(templateText) {
@@ -21,6 +21,7 @@ export function parseTemplate(templateText) {
   const mappings = mergeMappings(explicitMappings, formula.mappings);
   const constraints = parseConstraints(sections.constraints);
   const answerConfig = parseAnswerSection(sections.answer, formula.assignments);
+  const answerConfigs = parseAnswersSection(sections.answers, answerConfig);
   const feedback = parseFeedbackSection(sections.feedback);
   const choices = parseKeyValueSection(sections.choices, { allowRepeated: true });
   const seedSpec = parseSeedSpec(metadata.SEED);
@@ -36,6 +37,7 @@ export function parseTemplate(templateText) {
     assignments: formula.assignments,
     constraints,
     answerConfig,
+    answerConfigs,
     feedback,
     choices,
     seedSpec,
@@ -82,7 +84,9 @@ export function instantiateParsedTemplate(parsed, options = {}) {
     lastConstraintTrace = constraintTrace;
     if (lateConstraintTrace.some(item => !item.passed)) continue;
 
-    const answer = resolveAnswer(parsed.answerVariable, variables);
+    const answers = resolveConfiguredAnswers(parsed.answerConfigs, variables);
+    const primaryAnswer = answers[0];
+    const answer = primaryAnswer.answer;
     const dependencies = resolveAnswerDependencies(parsed);
     const requiredInputs = new Set(
       parsed.definitions
@@ -95,11 +99,9 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       requiredInputs
     );
     const question = questionSegments.map(segment => segment.text).join('');
-    const answerUnit = resolveTextValue(parsed.answerConfig.unit, variables);
-    const formattedAnswer = formatConfiguredAnswer(answer, parsed.answerConfig, answerUnit);
-    const acceptedAnswers = parsed.answerConfig.acceptedAnswers.map(value =>
-      renderTemplateText(value, variables)
-    );
+    const answerUnit = primaryAnswer.answerUnit;
+    const formattedAnswer = primaryAnswer.formattedAnswer;
+    const acceptedAnswers = primaryAnswer.acceptedAnswers;
     const inputTrace = parsed.definitions.map(definition => ({
       name: definition.name,
       value: variables[definition.name],
@@ -125,6 +127,8 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       })),
       constraints: constraintTrace,
       answerVariable: parsed.answerVariable,
+      answerVariables: answers.map(item => item.valueVariable),
+      answerDetails: answers,
       answer,
       formattedAnswer,
       answerUnit
@@ -143,7 +147,9 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       formattedAnswer,
       answerUnit,
       acceptedAnswers,
+      answers,
       answerConfig: { ...parsed.answerConfig },
+      answerConfigs: parsed.answerConfigs.map(config => ({ ...config })),
       variables,
       requiredInputs: [...requiredInputs],
       trace,
@@ -179,7 +185,10 @@ export function resolveAnswerDependencies(parsed) {
     (graph.get(name) || []).forEach(visit);
   };
 
-  visit(parsed.answerVariable);
+  (parsed.answerConfigs?.length ? parsed.answerConfigs : [parsed.answerConfig])
+    .map(config => config?.valueVariable)
+    .filter(Boolean)
+    .forEach(visit);
   return collected;
 }
 
@@ -241,7 +250,12 @@ export function formatTraceAsText(trace) {
     trace.constraints.forEach(item => lines.push(`${item.passed ? 'PASS' : 'FAIL'}: ${item.expression}`));
   }
 
-  lines.push('', `Final answer: ${trace.formattedAnswer || formatAnswer(trace.answer)}`);
+  if (trace.answerDetails?.length > 1) {
+    lines.push('', 'Final answers:');
+    trace.answerDetails.forEach(item => lines.push(`${item.label || item.valueVariable}: ${item.formattedAnswer || formatAnswer(item.answer)}`));
+  } else {
+    lines.push('', `Final answer: ${trace.formattedAnswer || formatAnswer(trace.answer)}`);
+  }
   return lines.join('\n');
 }
 
@@ -472,6 +486,73 @@ function parseAnswerSection(text, assignments) {
   };
 }
 
+
+function parseAnswersSection(text, fallbackConfig) {
+  if (!text) return [fallbackConfig];
+  const lines = cleanLines(text);
+  if (!lines.length) return [fallbackConfig];
+  const configs = [];
+  let current = null;
+
+  const commit = () => {
+    if (!current) return;
+    configs.push(buildAnswerConfig(current.values, current.valueVariable, current.label, fallbackConfig));
+    current = null;
+  };
+
+  for (const line of lines) {
+    if (/^[A-Z][A-Z0-9_]*$/.test(line)) {
+      commit();
+      current = { valueVariable: line, label: '', values: {} };
+      continue;
+    }
+
+    const header = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/);
+    if (!header) throw new Error(`Invalid Answers entry: “${line}”. Use VARIABLE or VARIABLE: followed by answer terms.`);
+    const key = header[1].toUpperCase();
+    const value = header[2].trim();
+
+    if (current && ['LABEL', 'UNIT', 'ROUND', 'TOLERANCE', 'TOLERANCE_TYPE', 'EQUIVALENCE', 'ACCEPT', 'TYPE'].includes(key)) {
+      current.values[key] = value;
+      continue;
+    }
+
+    commit();
+    current = { valueVariable: key, label: value, values: {} };
+  }
+  commit();
+
+  if (!configs.length) throw new Error('The Answers section needs at least one answer variable.');
+  const seen = new Set();
+  configs.forEach(config => {
+    if (seen.has(config.valueVariable)) throw new Error(`Duplicate answer variable in ## Answers: ${config.valueVariable}.`);
+    seen.add(config.valueVariable);
+  });
+  return configs;
+}
+
+function buildAnswerConfig(values, valueVariable, label, fallbackConfig = {}) {
+  const round = values.ROUND === undefined || values.ROUND === ''
+    ? fallbackConfig.round ?? null
+    : Number(values.ROUND);
+  const tolerance = values.TOLERANCE === undefined || values.TOLERANCE === ''
+    ? fallbackConfig.tolerance ?? null
+    : Number(values.TOLERANCE);
+  if (round !== null && (!Number.isInteger(round) || round < 0 || round > 15)) throw new Error('Answer ROUND must be an integer from 0 to 15.');
+  if (tolerance !== null && (!(tolerance >= 0) || !Number.isFinite(tolerance))) throw new Error('Answer TOLERANCE must be a non-negative number.');
+  return {
+    valueVariable: String(valueVariable || fallbackConfig.valueVariable || '').trim(),
+    label: String(values.LABEL || label || valueVariable || fallbackConfig.valueVariable || '').trim(),
+    type: String(values.TYPE || 'numeric').trim().toLowerCase(),
+    unit: (values.UNIT === undefined ? fallbackConfig.unit : values.UNIT || '').trim(),
+    round,
+    tolerance,
+    toleranceType: (values.TOLERANCE_TYPE || fallbackConfig.toleranceType || 'absolute').trim().toLowerCase(),
+    equivalence: (values.EQUIVALENCE || fallbackConfig.equivalence || 'numeric').trim().toLowerCase(),
+    acceptedAnswers: splitCommaValues(values.ACCEPT || '').filter(Boolean)
+  };
+}
+
 function parseFeedbackSection(text) {
   return parseKeyValueSection(text);
 }
@@ -568,6 +649,27 @@ function evaluateConstraints(constraints, variables) {
       expression: constraint.expression,
       substitutedExpression: substituteExpression(constraint.expression, variables),
       passed
+    };
+  });
+}
+
+
+function resolveConfiguredAnswers(configs, variables) {
+  return (configs || []).map(config => {
+    const answer = resolveAnswer(config.valueVariable, variables);
+    const answerUnit = resolveTextValue(config.unit, variables);
+    const formattedAnswer = formatConfiguredAnswer(answer, config, answerUnit);
+    const acceptedAnswers = config.acceptedAnswers.map(value => renderTemplateText(value, variables));
+    return {
+      id: config.valueVariable,
+      valueVariable: config.valueVariable,
+      label: config.label || config.valueVariable,
+      answer,
+      rawAnswer: answer,
+      formattedAnswer,
+      answerUnit,
+      acceptedAnswers,
+      answerConfig: { ...config }
     };
   });
 }

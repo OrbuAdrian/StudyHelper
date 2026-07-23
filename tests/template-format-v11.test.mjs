@@ -55,3 +55,48 @@ assert(constrainedInstance.variables.B !== 0, 'Constraint retries should reject 
 assert(constrainedInstance.seed === 7, 'A fixed metadata seed should be used automatically.');
 
 console.log('Template format v1.1 tests passed.');
+
+const multiAnswerTemplate = `Calculate the frame values for {DATA_AMOUNT} KB sent at {BPS} bps with {DATA_BITS} data bits, {PARITY} parity, and {STOP} stop bit(s).
+
+## Definitions
+DATA_AMOUNT: amount in kilobytes (1)
+BPS: speed (400)
+DATA_BITS: data bits (8)
+PARITY: parity (even)
+STOP: stop bits (1)
+
+## Mappings
+PARITY_BITS: PARITY
+even=1
+
+## Formula
+START = 1
+FRAME_BITS = START + DATA_BITS + PARITY_BITS + STOP
+TOTAL_BITS = DATA_AMOUNT * 1024 * 8
+TOTAL_FRAMES = TOTAL_BITS / DATA_BITS
+TIME_SECONDS = TOTAL_FRAMES * FRAME_BITS / BPS
+
+## Answers
+FRAME_BITS:
+LABEL: Bits per frame
+ROUND: 0
+
+TOTAL_FRAMES:
+LABEL: Number of frames
+ROUND: 0
+
+TIME_SECONDS:
+LABEL: Transmission time
+UNIT: seconds
+ROUND: 2
+TOLERANCE: 0.01
+TOLERANCE_TYPE: absolute
+EQUIVALENCE: numeric`;
+
+const multi = instantiateTemplate(multiAnswerTemplate, { seed: 99 });
+assert(multi.answers.length === 3, 'The Answers section should create three answer items.');
+assert(multi.answers[0].label === 'Bits per frame', 'Answer labels should be parsed.');
+assert(multi.answers[2].formattedAnswer.endsWith('seconds'), 'Per-answer units should be formatted.');
+assert(multi.trace.answerDetails.length === 3, 'Trace should retain all final answers.');
+const multiReport = validateTemplate(multiAnswerTemplate, { runs: 10 });
+assert(multiReport.valid, 'A multi-answer template should validate.');

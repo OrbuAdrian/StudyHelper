@@ -1209,3 +1209,33 @@
   background: var(--amber-soft);
   border-color: color-mix(in srgb, var(--amber) 40%, var(--line));
 }
+
+/* Multi-answer exercises */
+.multi-answer-list {
+  display:grid;
+  gap:12px
+}
+
+.multi-answer-field {
+  display:grid;
+  gap:7px
+}
+
+.multi-answer-field > span {
+  font-size:12px;
+  font-weight:800;
+  color:var(--text)
+}
+
+.multi-answer-field .textarea {
+  min-height:82px
+}
+
+.multi-trace-answer {
+  display:grid;
+  gap:6px
+}
+
+.multi-trace-answer strong {
+  display:block
+}

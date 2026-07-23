@@ -176,7 +176,7 @@
                 <label class="field-label" for="templateText">Template text</label><textarea class="textarea code-editor" id="templateText" spellcheck="false" placeholder="Question with {PLACEHOLDERS}…"></textarea>
                 <div class="template-help"><details><summary>Complete template syntax reference</summary><div class="template-reference">
                   <p>The text before the first section is the learner-facing question. Insert generated values with <code>{VARIABLE}</code>. Only <strong>Definitions</strong> and <strong>Formula</strong> are required.</p>
-                  <div class="syntax-section"><h4>Supported sections</h4><code>## Metadata</code><code>## Definitions</code><code>## Mappings</code><code>## Formula</code><code>## Constraints</code><code>## Answer</code><code>## Choices</code><code>## Feedback</code></div>
+                  <div class="syntax-section"><h4>Supported sections</h4><code>## Metadata</code><code>## Definitions</code><code>## Mappings</code><code>## Formula</code><code>## Constraints</code><code>## Answer</code><code>## Answers</code><code>## Choices</code><code>## Feedback</code></div>
                   <div class="syntax-section"><h4>Metadata terms</h4><code>TITLE:</code><code>SUBJECT:</code><code>TOPIC:</code><code>TYPE:</code><code>DIFFICULTY:</code><code>SEED:</code><code>TAGS:</code><code>LANGUAGE:</code><code>MAX_CONSTRAINT_ATTEMPTS:</code><p><code>SEED</code> accepts <code>random</code> or an integer from 0 to 4294967295.</p></div>
                   <div class="syntax-grid">
                     <div><code>VALUE: description (600)</code><span>Fixed integer, decimal, or text</span></div>
@@ -186,6 +186,7 @@
                     <div><code>MAPPED_VALUE: SOURCE_VALUE</code><span>Mapping header followed by key=value lines</span></div>
                     <div><code>FRAME_BITS = 1 + DATA_BITS + PARITY_BITS + STOP</code><span>Dependent formula variable</span></div>
                     <div><code>ANSWER = ...</code><span>Conventional final answer variable</span></div>
+                    <div><code>## Answers</code><span>Optional list of several answer variables for partial grading</span></div>
                     <div><code>DATA_BITS &gt; 0</code><span>Constraint; supports ==, !=, &lt;, &lt;=, &gt;, &gt;=, AND, OR, NOT</span></div>
                   </div>
                   <div class="syntax-section"><h4>Answer terms</h4><code>VALUE:</code><code>UNIT:</code><code>ROUND:</code><code>TOLERANCE:</code><code>TOLERANCE_TYPE:</code><code>EQUIVALENCE:</code><code>ACCEPT:</code><p>Tolerance types: <code>absolute</code>, <code>percentage</code>. Equivalence: <code>exact</code>, <code>numeric</code>, <code>symbolic</code>, <code>semantic</code>, <code>combined</code>.</p></div>
