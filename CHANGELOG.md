@@ -1,5 +1,24 @@
 # Changelog
 
+## Dynamic Template Format v2
+
+### Added
+
+- Plain-text `## Collections` support for seeded matrices, grids, primitive lists, and record lists.
+- Variable collection dimensions and item counts using fixed values, ranges, sets, or scalar expressions.
+- `{{matrix NAME}}`, `{{#each NAME}}`, and `{{#if EXPRESSION}}...{{else}}...{{/if}}` learner-facing directives.
+- Collection-aware formula functions: `count`, `sum`, `average`, `row`, `column`, `cell`, `contains`, `field`, `sort`, and `unique`.
+- `## Repeated Answers` groups that generate one answer field per row, column, or list item.
+- Multiline key-value blocks using the `|` marker.
+- Generated collection information in calculation traces and validator sample previews.
+- A dedicated Template Format v2 regression suite.
+
+### Compatibility
+
+- Existing Template Format v1.1 templates remain valid without modification.
+- Template authoring remains plain text; arbitrary HTML, CSS, and JavaScript are not accepted.
+- Template-based quizzes instantiate dynamic structures from fresh seeds in the same way they instantiate scalar templates.
+
 ## Template-driven quiz and semantic-template release
 
 ### Changed

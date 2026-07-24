@@ -97,3 +97,84 @@ export function createEmptyState() {
     }
   };
 }
+
+export const DYNAMIC_TEMPLATE_EXAMPLE = `Consider the following generated matrix:
+
+{{matrix MATRIX}}
+
+{{#if SHOW_NOTE == 1}}
+All generated cell values are positive integers.
+{{/if}}
+
+The generated rows are:
+{{#each MATRIX}}
+Row {INDEX}: {VALUES}
+{{/each}}
+
+Complete all tasks:
+1. Calculate the sum of all matrix elements.
+2. Calculate the sum of every generated row.
+
+## Metadata
+
+TITLE: Dynamic matrix sums
+SUBJECT: Mathematics
+TOPIC: Matrices and aggregation
+TYPE: multiple-answer
+DIFFICULTY: medium
+SEED: random
+LANGUAGE: en
+MAX_CONSTRAINT_ATTEMPTS: 1000
+
+## Definitions
+
+NR_ROWS: number of matrix rows (2..4)
+NR_COLUMNS: number of matrix columns (3..5)
+SHOW_NOTE: whether to display the additional note (0, 1)
+
+## Collections
+
+MATRIX:
+TYPE: matrix
+ROWS: NR_ROWS
+COLUMNS: NR_COLUMNS
+VALUE: 1..9
+
+## Formula
+
+TOTAL_SUM = sum(MATRIX)
+
+## Constraints
+
+TOTAL_SUM > 0
+
+## Answer
+
+VALUE: TOTAL_SUM
+LABEL: Sum of all matrix elements
+ROUND: 0
+TOLERANCE: 0
+TOLERANCE_TYPE: absolute
+EQUIVALENCE: numeric
+
+## Repeated Answers
+
+ROW_SUMS:
+SOURCE: MATRIX
+MODE: items
+VALUE: sum(VALUE)
+LABEL: Sum of row {INDEX}
+ROUND: 0
+TOLERANCE: 0
+TOLERANCE_TYPE: absolute
+EQUIVALENCE: numeric
+
+## Feedback
+
+HINT: |
+  Add all values for the total sum.
+  Then calculate each row independently.
+
+SOLUTION: |
+  The matrix contains {NR_ROWS} rows and {NR_COLUMNS} columns.
+  Add the values shown in each generated row.`;

@@ -44,7 +44,10 @@ function runSemanticStaticChecks(parsed, issues) {
   const definitionNames = new Set(parsed.definitions.map(item => item.name));
   const assignmentNames = new Set(parsed.assignments.map(item => item.name));
   const mappedOutputNames = new Set(parsed.mappings.flatMap(item => item.outputNames));
-  const knownVariables = new Set([...definitionNames, ...assignmentNames, ...mappedOutputNames]);
+  const collectionNames = new Set(parsed.collections.map(item => item.name));
+  const collectionFieldNames = new Set(parsed.collections.flatMap(item => item.fields?.map(field => field.name) || []));
+  const localNames = new Set(['INDEX', 'INDEX0', 'ROW_INDEX', 'ROW_INDEX0', 'COLUMN_INDEX', 'COLUMN_INDEX0', 'VALUES', 'VALUE']);
+  const knownVariables = new Set([...definitionNames, ...assignmentNames, ...mappedOutputNames, ...collectionNames, ...collectionFieldNames, ...localNames]);
   const semanticText = [
     parsed.sections.question,
     parsed.semanticAnswer?.REFERENCE,
@@ -62,6 +65,8 @@ function runSemanticStaticChecks(parsed, issues) {
     'unknown-section',
     `Section ## ${name} is not part of the supported template format and will be ignored.`
   )));
+
+  runCollectionStaticChecks(parsed, issues, new Set([...definitionNames, ...mappedOutputNames]));
 
   extractPlaceholders(semanticText).forEach(name => {
     if (!knownVariables.has(name)) {
@@ -97,7 +102,7 @@ function runSemanticStaticChecks(parsed, issues) {
     ));
   });
 
-  const available = new Set([...definitionNames, 'PI', 'E']);
+  const available = new Set([...definitionNames, ...collectionNames, 'PI', 'E']);
   parsed.mappings.forEach(mapping => {
     if (definitionNames.has(mapping.sourceName)) mapping.outputNames.forEach(name => available.add(name));
   });
@@ -135,15 +140,29 @@ function runStaticChecks(parsed, issues) {
   const definitionNames = new Set(parsed.definitions.map(item => item.name));
   const assignmentNames = new Set(parsed.assignments.map(item => item.name));
   const mappedOutputNames = new Set(parsed.mappings.flatMap(item => item.outputNames));
+  const collectionNames = new Set(parsed.collections.map(item => item.name));
+  const collectionFieldNames = new Set(parsed.collections.flatMap(item => item.fields?.map(field => field.name) || []));
+  const localNames = new Set(['INDEX', 'INDEX0', 'ROW_INDEX', 'ROW_INDEX0', 'COLUMN_INDEX', 'COLUMN_INDEX0', 'VALUES', 'VALUE']);
   const knownQuestionVariables = new Set([
     ...definitionNames,
     ...mappedOutputNames,
-    ...assignmentNames
+    ...assignmentNames,
+    ...collectionNames,
+    ...collectionFieldNames,
+    ...localNames
   ]);
   const placeholders = extractPlaceholders(parsed.sections.question);
   const placeholderSet = new Set(placeholders);
+  const visibleCollections = new Set(parsed.collections
+    .map(item => item.name)
+    .filter(name => parsed.sections.question.includes(`{{matrix ${name}}`)
+      || parsed.sections.question.includes(`{{#each ${name}}`)
+      || placeholderSet.has(name)));
   const answerDependencies = resolveAnswerDependencies(parsed);
   const requiredDefinitions = parsed.definitions
+    .map(item => item.name)
+    .filter(name => answerDependencies.has(name));
+  const requiredCollections = parsed.collections
     .map(item => item.name)
     .filter(name => answerDependencies.has(name));
 
@@ -152,6 +171,8 @@ function runStaticChecks(parsed, issues) {
     'unknown-section',
     `Section ## ${name} is not part of the supported template format and will be ignored.`
   )));
+
+  runCollectionStaticChecks(parsed, issues, new Set([...definitionNames, ...mappedOutputNames]));
 
   placeholders.forEach(name => {
     if (!knownQuestionVariables.has(name)) {
@@ -166,10 +187,24 @@ function runStaticChecks(parsed, issues) {
   });
 
   requiredDefinitions.forEach(name => {
-    if (!placeholderSet.has(name)) issues.push(issue(
+    const shownThroughCollection = parsed.collections.some(collection =>
+      visibleCollections.has(collection.name)
+      && [collection.countExpression, collection.rowsExpression, collection.columnsExpression]
+        .filter(Boolean)
+        .some(expression => extractIdentifiers(expression).includes(name))
+    );
+    if (!placeholderSet.has(name) && !shownThroughCollection) issues.push(issue(
       'error',
       'hidden-required-input',
       `${name} is required to calculate the answer but is not shown in the exercise question.`
+    ));
+  });
+
+  requiredCollections.forEach(name => {
+    if (!visibleCollections.has(name)) issues.push(issue(
+      'error',
+      'hidden-required-collection',
+      `${name} is required to calculate the answer but is not rendered in the exercise question.`
     ));
   });
 
@@ -207,6 +242,19 @@ function runStaticChecks(parsed, issues) {
     }
   });
 
+  parsed.collections.forEach(collection => {
+    const usedInQuestion = visibleCollections.has(collection.name);
+    const usedInAnswer = answerDependencies.has(collection.name);
+    const usedElsewhere = parsed.assignments.some(assignment => extractIdentifiers(assignment.expression).includes(collection.name))
+      || parsed.constraints.some(constraint => extractIdentifiers(constraint.expression).includes(collection.name))
+      || (parsed.repeatedAnswerConfigs || []).some(config => config.source === collection.name);
+    if (!usedInQuestion && !usedInAnswer && !usedElsewhere) issues.push(issue(
+      'warning',
+      'unused-collection',
+      `${collection.name} is generated but never rendered or used.`
+    ));
+  });
+
   parsed.mappings.forEach(mapping => {
     const definition = parsed.definitions.find(item => item.name === mapping.sourceName);
     if (!definition) {
@@ -238,7 +286,7 @@ function runStaticChecks(parsed, issues) {
     }
   });
 
-  const available = new Set([...definitionNames, ...Object.keys({ PI: true, E: true })]);
+  const available = new Set([...definitionNames, ...collectionNames, ...Object.keys({ PI: true, E: true })]);
   parsed.mappings.forEach(mapping => {
     if (definitionNames.has(mapping.sourceName)) mapping.outputNames.forEach(name => available.add(name));
   });
@@ -273,11 +321,27 @@ function runStaticChecks(parsed, issues) {
     });
   });
 
-  if (!parsed.answerVariable) {
-    issues.push(issue('error', 'missing-answer', 'No final answer variable is configured.'));
-  } else if (!available.has(parsed.answerVariable)) {
+  if (!parsed.answerVariable && !(parsed.repeatedAnswerConfigs || []).length) {
+    issues.push(issue('error', 'missing-answer', 'No final answer variable or repeated answer group is configured.'));
+  } else if (parsed.answerVariable && !available.has(parsed.answerVariable)) {
     issues.push(issue('error', 'unknown-answer-variable', `Answer VALUE refers to unknown variable ${parsed.answerVariable}.`));
   }
+
+  (parsed.repeatedAnswerConfigs || []).forEach(config => {
+    if (!collectionNames.has(config.source)) issues.push(issue(
+      'error', 'unknown-repeated-answer-source',
+      `Repeated answer ${config.groupName} uses unknown collection ${config.source}.`
+    ));
+    const localAllowed = new Set(['INDEX', 'INDEX0', 'ROW_INDEX', 'ROW_INDEX0', 'COLUMN_INDEX', 'COLUMN_INDEX0', 'VALUES', 'VALUE']);
+    const collection = parsed.collections.find(item => item.name === config.source);
+    (collection?.fields || []).forEach(field => localAllowed.add(field.name));
+    extractIdentifiers(config.valueExpression).forEach(name => {
+      if (!available.has(name) && !localAllowed.has(name)) issues.push(issue(
+        'error', 'unknown-repeated-answer-variable',
+        `Repeated answer ${config.groupName} uses unknown variable ${name}.`
+      ));
+    });
+  });
 
   parsed.assignments.forEach(assignment => {
     if (!answerDependencies.has(assignment.name)) issues.push(issue(
@@ -295,7 +359,7 @@ function runStaticChecks(parsed, issues) {
     ));
   });
 
-  if (!parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
+  if (parsed.answerVariable && !parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
     issues.push(issue(
       'warning',
       'implicit-answer',
@@ -303,23 +367,60 @@ function runStaticChecks(parsed, issues) {
     ));
   }
 
-  if (!requiredDefinitions.length) issues.push(issue(
+  if (!requiredDefinitions.length && ![...collectionNames].some(name => answerDependencies.has(name))) issues.push(issue(
     'warning',
     'constant-answer',
     'The final answer does not depend on any randomized or fixed input definition.'
   ));
 
-  if (!['absolute', 'percentage'].includes(parsed.answerConfig.toleranceType)) issues.push(issue(
+  if (parsed.answerConfig && !['absolute', 'percentage'].includes(parsed.answerConfig.toleranceType)) issues.push(issue(
     'error',
     'invalid-tolerance-type',
     'TOLERANCE_TYPE must be absolute or percentage.'
   ));
 
-  if (!['exact', 'numeric', 'symbolic', 'semantic', 'combined'].includes(parsed.answerConfig.equivalence)) issues.push(issue(
+  if (parsed.answerConfig && !['exact', 'numeric', 'symbolic', 'semantic', 'combined'].includes(parsed.answerConfig.equivalence)) issues.push(issue(
     'error',
     'invalid-equivalence',
     'EQUIVALENCE must be exact, numeric, symbolic, semantic, or combined.'
   ));
+}
+
+function runCollectionStaticChecks(parsed, issues, initialAvailable) {
+  const available = new Set(initialAvailable);
+  const isGeneratedSizeRule = expression => {
+    const source = String(expression || '').trim();
+    return /^-?\d+(?:\.\d+)?(?:\s*\.\.\s*-?\d+(?:\.\d+)?(?:\s*;\s*step\s*=\s*\d+(?:\.\d+)?)?)?$/.test(source)
+      || (source.includes(',') && !/[A-Za-z_]/.test(source));
+  };
+
+  for (const collection of parsed.collections || []) {
+    const sizeExpressions = [
+      ['COUNT', collection.countExpression],
+      ['ROWS', collection.rowsExpression],
+      ['COLUMNS', collection.columnsExpression]
+    ].filter(([, expression]) => expression);
+    for (const [label, expression] of sizeExpressions) {
+      if (isGeneratedSizeRule(expression)) continue;
+      extractIdentifiers(expression).forEach(name => {
+        if (!available.has(name)) issues.push(issue(
+          'error',
+          'unknown-collection-size-variable',
+          `${collection.name} ${label} uses ${name}, which is not available before that collection is generated.`
+        ));
+      });
+    }
+    available.add(collection.name);
+  }
+
+  (parsed.repeatedAnswerConfigs || []).forEach(config => {
+    const source = parsed.collections.find(collection => collection.name === config.source);
+    if (config.mode === 'columns' && source && source.type !== 'matrix') issues.push(issue(
+      'error',
+      'invalid-repeated-answer-mode',
+      `${config.groupName} uses MODE: columns, but ${config.source} is not a matrix.`
+    ));
+  });
 }
 
 function runTrialChecks(parsed, runs, issues) {
@@ -364,7 +465,7 @@ function runTrialChecks(parsed, runs, issues) {
     ));
   });
 
-  if (successes && uniqueQuestions.size === 1 && parsed.definitions.some(item => item.rule.type !== 'fixed')) {
+  if (successes && uniqueQuestions.size === 1 && (parsed.definitions.some(item => item.rule.type !== 'fixed') || parsed.collections.length)) {
     issues.push(issue(
       'warning',
       'no-visible-variation',

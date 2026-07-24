@@ -1,5 +1,6 @@
 import {
   DEFAULT_TEMPLATE,
+  DYNAMIC_TEMPLATE_EXAMPLE,
   SESSION_KEY,
   SOURCE_LIMIT,
   STORAGE_KEY,
@@ -371,6 +372,12 @@ function bindExerciseControls() {
       els.templateText.value = DEFAULT_TEMPLATE;
       clearTemplateValidation();
       toast('Example loaded', 'The example demonstrates all current sections, stepped ranges, mappings, constraints, answer rules, feedback, and seeds.', 'info');
+    });
+    els.loadDynamicTemplateButton.addEventListener('click', () => {
+      els.templateName.value = 'Dynamic matrix sums';
+      els.templateText.value = DYNAMIC_TEMPLATE_EXAMPLE;
+      clearTemplateValidation();
+      toast('Dynamic example loaded', 'The example demonstrates generated matrices, repeated lines, a conditional block, collection formulas, multiline feedback, and repeated answer fields.', 'info');
     });
     els.templateText.addEventListener('input', markTemplateValidationStale);
     els.validateTemplateButton.addEventListener('click', () => validateCurrentTemplate());
@@ -968,6 +975,17 @@ function renderCalculationTraceHtml(trace) {
     if (!trace) return '';
 
     const inputs = (trace.inputs || []).filter(input => input.required).map(input => `<div class="trace-row"><span>${escapeHtml(input.name)}</span><code>${escapeHtml(formatAnswer(input.value))}</code><b>required</b></div>`).join('');
+    const collections = (trace.collections || []).filter(item => item.required).map(item => {
+      const summary = item.type === 'matrix' ? `${item.rows} × ${item.columns} matrix` : `${item.count} item list`;
+      const value = Array.isArray(item.value)
+        ? item.value.map(entry => Array.isArray(entry)
+          ? entry.join(' ')
+          : entry && typeof entry === 'object'
+            ? Object.entries(entry).filter(([key]) => !['INDEX', 'INDEX0'].includes(key)).map(([key, fieldValue]) => `${key}=${fieldValue}`).join(', ')
+            : String(entry)).join('\n')
+        : String(item.value ?? '');
+      return `<div class="trace-step trace-collection"><span>${escapeHtml(item.name)}</span><code>${escapeHtml(summary)}</code><strong>${escapeHtml(value)}</strong></div>`;
+    }).join('');
     const mappings = (trace.mappings || []).flatMap(mapping => mapping.outputs.filter(output => output.required).map(output => `<div class="trace-step"><span>${escapeHtml(output.name)}</span><code>map(${escapeHtml(mapping.sourceName)} = ${escapeHtml(formatAnswer(mapping.sourceValue))})</code><strong>${escapeHtml(formatAnswer(output.value))}</strong></div>`)).join('');
     const assignments = (trace.assignments || []).filter(step => step.required).map(step => `<div class="trace-step"><span>${escapeHtml(step.name)}</span><code>${escapeHtml(step.expression)}</code><code>${escapeHtml(step.substitutedExpression)}</code><strong>${escapeHtml(formatAnswer(step.value))}</strong></div>`).join('');
 
@@ -976,7 +994,7 @@ function renderCalculationTraceHtml(trace) {
     const answerDetails = Array.isArray(trace.answerDetails) && trace.answerDetails.length > 1
       ? `<div class="trace-answer-list">${trace.answerDetails.map((item, index) => `<div class="trace-answer"><span>${escapeHtml(item.label || `Answer ${index + 1}`)}</span><strong>${escapeHtml(item.formattedAnswer || formatAnswer(item.answer))}</strong></div>`).join('')}</div>`
       : `<div class="trace-answer"><span>Final answer</span><strong>${escapeHtml(trace.formattedAnswer || formatAnswer(trace.answer))}</strong></div>`;
-    return `<div class="calculation-trace">${seedInfo}<section><h5>Generated inputs</h5><div class="trace-inputs">${inputs || '<p>No input definitions.</p>'}</div></section>${mappings ? `<section><h5>Mappings</h5><div class="trace-steps">${mappings}</div></section>` : ''}<section><h5>Formula evaluation</h5><div class="trace-steps">${assignments || '<p>No assignments.</p>'}</div></section>${constraints ? `<section><h5>Constraints</h5><div class="trace-steps">${constraints}</div></section>` : ''}${answerDetails}</div>`;
+    return `<div class="calculation-trace">${seedInfo}<section><h5>Generated inputs</h5><div class="trace-inputs">${inputs || '<p>No input definitions.</p>'}</div></section>${collections ? `<section><h5>Generated collections</h5><div class="trace-steps">${collections}</div></section>` : ''}${mappings ? `<section><h5>Mappings</h5><div class="trace-steps">${mappings}</div></section>` : ''}<section><h5>Formula evaluation</h5><div class="trace-steps">${assignments || '<p>No assignments.</p>'}</div></section>${constraints ? `<section><h5>Constraints</h5><div class="trace-steps">${constraints}</div></section>` : ''}${answerDetails}</div>`;
   }
 
 async function checkExerciseAnswer(exercise, wrapper) {

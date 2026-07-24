@@ -4,7 +4,9 @@ import {
 } from '../core/utils.js';
 
 const ALLOWED_FUNCTIONS = [
-  'abs', 'round', 'floor', 'ceil', 'min', 'max', 'sqrt', 'pow'
+  'abs', 'round', 'floor', 'ceil', 'min', 'max', 'sqrt', 'pow',
+  'count', 'sum', 'average', 'row', 'column', 'cell', 'contains',
+  'field', 'sort', 'unique'
 ];
 const CONSTANTS = { PI: Math.PI, E: Math.E };
 const SEMANTIC_TYPES = new Set([
@@ -13,7 +15,8 @@ const SEMANTIC_TYPES = new Set([
 ]);
 const KNOWN_SECTIONS = new Set([
   'metadata', 'definitions', 'mappings', 'formula', 'constraints',
-  'answer', 'answers', 'semantic-answer', 'choices', 'feedback'
+  'answer', 'answers', 'repeated-answers', 'semantic-answer', 'choices',
+  'collections', 'feedback'
 ]);
 
 export function parseTemplate(templateText) {
@@ -21,9 +24,10 @@ export function parseTemplate(templateText) {
   const metadata = parseKeyValueSection(sections.metadata);
   const semanticAnswer = parseSemanticAnswerSection(sections['semantic-answer']);
   const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
-  const definitions = parseDefinitions(sections.definitions, { optional: semantic });
+  const definitions = parseDefinitions(sections.definitions, { optional: semantic || Boolean(sections.collections) });
+  const collections = parseCollectionsSection(sections.collections);
   const explicitMappings = parseMappingsSection(sections.mappings);
-  const formula = parseFormulaSection(sections.formula, { optional: semantic });
+  const formula = parseFormulaSection(sections.formula, { optional: semantic || Boolean(sections['repeated-answers']) });
   const mappings = mergeMappings(explicitMappings, formula.mappings);
   const constraints = parseConstraints(sections.constraints);
   const answerConfig = semantic
@@ -31,10 +35,16 @@ export function parseTemplate(templateText) {
     : parseAnswerSection(sections.answer, formula.assignments);
   const answerConfigs = semantic
     ? [answerConfig]
-    : parseAnswersSection(sections.answers, answerConfig);
+    : (!sections.answers && !sections.answer && !formula.assignments.length && sections['repeated-answers'])
+      ? []
+      : parseAnswersSection(sections.answers, answerConfig);
+  const repeatedAnswerConfigs = semantic
+    ? []
+    : parseRepeatedAnswersSection(sections['repeated-answers'], answerConfig);
   const feedback = parseFeedbackSection(sections.feedback);
   const choices = parseKeyValueSection(sections.choices, { allowRepeated: true });
   const seedSpec = parseSeedSpec(metadata.SEED);
+  validateCollectionNamespaces(definitions, collections, mappings, formula.assignments);
 
   if (semantic && !semanticAnswer.REFERENCE) {
     throw new Error('Semantic templates need ## Semantic Answer with REFERENCE: text.');
@@ -47,11 +57,13 @@ export function parseTemplate(templateText) {
     ),
     metadata,
     definitions,
+    collections,
     mappings,
     assignments: formula.assignments,
     constraints,
     answerConfig,
     answerConfigs,
+    repeatedAnswerConfigs,
     semanticAnswer,
     semantic,
     feedback,
@@ -89,6 +101,7 @@ export function instantiateParsedTemplate(parsed, options = {}) {
     });
 
     const mappingTrace = applyMappings(parsed.mappings, variables);
+    const collectionTrace = generateCollections(parsed.collections, variables, random);
     const earlyConstraints = [];
     const lateConstraints = [];
     parsed.constraints.forEach(constraint => {
@@ -110,6 +123,7 @@ export function instantiateParsedTemplate(parsed, options = {}) {
         parsed,
         variables,
         mappingTrace,
+        collectionTrace,
         assignmentTrace,
         constraintTrace,
         seed,
@@ -117,7 +131,9 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       });
     }
 
-    const answers = resolveConfiguredAnswers(parsed.answerConfigs, variables);
+    const standardAnswers = resolveConfiguredAnswers(parsed.answerConfigs, variables);
+    const repeatedAnswers = resolveRepeatedAnswers(parsed.repeatedAnswerConfigs, variables);
+    const answers = [...standardAnswers, ...repeatedAnswers];
     const primaryAnswer = answers[0];
     const dependencies = resolveAnswerDependencies(parsed);
     const requiredInputs = new Set(
@@ -125,10 +141,17 @@ export function instantiateParsedTemplate(parsed, options = {}) {
         .map(definition => definition.name)
         .filter(name => dependencies.has(name))
     );
+    const requiredCollections = new Set(
+      parsed.collections
+        .map(collection => collection.name)
+        .filter(name => dependencies.has(name))
+    );
     const questionSegments = renderQuestionSegments(
       parsed.sections.question,
       variables,
-      requiredInputs
+      requiredInputs,
+      requiredCollections,
+      parsed.collections
     );
     const question = questionSegments.map(segment => segment.text).join('');
     const inputTrace = parsed.definitions.map(definition => ({
@@ -143,6 +166,10 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       seed,
       attempt,
       inputs: inputTrace,
+      collections: collectionTrace.map(item => ({
+        ...item,
+        required: requiredCollections.has(item.name)
+      })),
       mappings: mappingTrace.map(mapping => ({
         ...mapping,
         outputs: mapping.outputs.map(output => ({
@@ -178,6 +205,7 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       answerConfigs: parsed.answerConfigs.map(config => ({ ...config })),
       variables,
       requiredInputs: [...requiredInputs],
+      requiredCollections: [...requiredCollections],
       trace,
       seed,
       attempt,
@@ -200,6 +228,12 @@ export function resolveAnswerDependencies(parsed) {
     mapping.outputNames.forEach(outputName => graph.set(outputName, [mapping.sourceName]));
   });
 
+  parsed.collections.forEach(collection => {
+    const expressions = [collection.countExpression, collection.rowsExpression, collection.columnsExpression]
+      .filter(Boolean);
+    graph.set(collection.name, expressions.flatMap(extractIdentifiers));
+  });
+
   parsed.assignments.forEach(assignment => {
     graph.set(assignment.name, extractIdentifiers(assignment.expression));
   });
@@ -219,6 +253,10 @@ export function resolveAnswerDependencies(parsed) {
       .map(config => config?.valueVariable)
       .filter(Boolean)
       .forEach(visit);
+    (parsed.repeatedAnswerConfigs || []).forEach(config => {
+      visit(config.source);
+      extractIdentifiers(config.valueExpression || '').forEach(visit);
+    });
   }
   return collected;
 }
@@ -229,7 +267,8 @@ export function extractPlaceholders(questionTemplate) {
 }
 
 export function extractIdentifiers(expression) {
-  const identifiers = String(expression || '').match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+  const withoutStrings = String(expression || '').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '');
+  const identifiers = withoutStrings.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
   return [...new Set(identifiers.filter(name =>
     !ALLOWED_FUNCTIONS.includes(name.toLowerCase())
     && !['AND', 'OR', 'NOT', 'true', 'false'].includes(name)
@@ -257,6 +296,15 @@ export function formatTraceAsText(trace) {
   if (requiredInputs.length) {
     lines.push('', 'Generated inputs:');
     requiredInputs.forEach(input => lines.push(`${input.name} = ${formatAnswer(input.value)}`));
+  }
+
+  const requiredCollections = (trace.collections || []).filter(item => item.required);
+  if (requiredCollections.length) {
+    lines.push('', 'Generated collections:');
+    requiredCollections.forEach(item => {
+      lines.push(`${item.name}:`);
+      lines.push(formatCollectionPlain(item.value));
+    });
   }
 
   const requiredMappings = trace.mappings.flatMap(mapping =>
@@ -325,8 +373,12 @@ function splitTemplateSections(text) {
   const metadata = parseKeyValueSection(sections.metadata);
   const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
   if (!semantic) {
-    if (!sections.definitions) throw new Error('The template needs a ## Definitions section.');
-    if (!sections.formula) throw new Error('The template needs a ## Formula section.');
+    if (!sections.definitions && !sections.collections) {
+      throw new Error('The template needs a ## Definitions or ## Collections section.');
+    }
+    if (!sections.formula && !sections['repeated-answers']) {
+      throw new Error('The template needs a ## Formula or ## Repeated Answers section.');
+    }
   }
   return sections;
 }
@@ -338,11 +390,11 @@ function normalizeSectionName(name) {
 function parseKeyValueSection(text, options = {}) {
   const result = {};
   if (!text) return result;
-  for (const line of cleanLines(text)) {
-    const match = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
-    if (!match) throw new Error(`Invalid section entry: “${line}”. Expected KEY: value.`);
-    const key = match[1].toUpperCase();
-    const value = match[2].trim();
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  let blockKey = null;
+  let blockLines = [];
+
+  const store = (key, value) => {
     if (key in result && !options.allowRepeated) throw new Error(`Duplicate term: ${key}.`);
     if (options.allowRepeated) {
       if (!(key in result)) result[key] = [];
@@ -350,7 +402,40 @@ function parseKeyValueSection(text, options = {}) {
     } else {
       result[key] = value;
     }
+  };
+  const commitBlock = () => {
+    if (!blockKey) return;
+    while (blockLines.length && !blockLines[0].trim()) blockLines.shift();
+    while (blockLines.length && !blockLines.at(-1).trim()) blockLines.pop();
+    store(blockKey, blockLines.map(line => line.trim()).join('\n'));
+    blockKey = null;
+    blockLines = [];
+  };
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    const match = trimmed.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
+    if (match) {
+      commitBlock();
+      const key = match[1].toUpperCase();
+      const value = match[2].trim();
+      if (value === '|') {
+        blockKey = key;
+        blockLines = [];
+      } else {
+        store(key, value);
+      }
+      continue;
+    }
+    if (blockKey) {
+      if (trimmed.startsWith('//')) continue;
+      blockLines.push(rawLine);
+      continue;
+    }
+    if (!trimmed || trimmed.startsWith('//')) continue;
+    throw new Error(`Invalid section entry: “${trimmed}”. Expected KEY: value.`);
   }
+  commitBlock();
   return result;
 }
 
@@ -371,6 +456,140 @@ function parseDefinitions(text, options = {}) {
     const spec = match[3].trim();
     return { name, description: match[2], spec, rule: parseDefinitionRule(spec) };
   });
+}
+
+function validateCollectionNamespaces(definitions, collections, mappings, assignments) {
+  const scalarNames = new Set(definitions.map(item => item.name));
+  mappings.forEach(mapping => mapping.outputNames.forEach(name => scalarNames.add(name)));
+  assignments.forEach(assignment => scalarNames.add(assignment.name));
+  collections.forEach(collection => {
+    if (scalarNames.has(collection.name)) {
+      throw new Error(`Collection ${collection.name} conflicts with a scalar definition, mapping, or formula variable.`);
+    }
+  });
+}
+
+function parseCollectionsSection(text) {
+  if (!String(text || '').trim()) return [];
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  const collections = [];
+  let current = null;
+
+  const commit = () => {
+    if (!current) return;
+    const type = String(current.settings.TYPE || '').trim().toLowerCase();
+    if (!['matrix', 'grid', 'list'].includes(type)) {
+      throw new Error(`Collection ${current.name} needs TYPE: matrix, grid, or list.`);
+    }
+    if (type === 'matrix' || type === 'grid') {
+      if (!current.settings.ROWS || !current.settings.COLUMNS || !current.settings.VALUE) {
+        throw new Error(`Collection ${current.name} needs ROWS, COLUMNS, and VALUE.`);
+      }
+      collections.push({
+        name: current.name,
+        type: 'matrix',
+        rowsExpression: current.settings.ROWS,
+        columnsExpression: current.settings.COLUMNS,
+        valueRule: parseDefinitionRule(current.settings.VALUE),
+        fields: []
+      });
+    } else {
+      if (!current.settings.COUNT) throw new Error(`List ${current.name} needs COUNT.`);
+      const fields = current.fields.map(field => ({
+        name: field.name,
+        rule: parseDefinitionRule(field.spec),
+        spec: field.spec
+      }));
+      if (!fields.length && !current.settings.VALUE) {
+        throw new Error(`List ${current.name} needs VALUE or at least one FIELD NAME: value rule entry.`);
+      }
+      collections.push({
+        name: current.name,
+        type: 'list',
+        countExpression: current.settings.COUNT,
+        valueRule: current.settings.VALUE ? parseDefinitionRule(current.settings.VALUE) : null,
+        fields
+      });
+    }
+    current = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//')) continue;
+    const header = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*$/);
+    if (header) {
+      commit();
+      current = { name: header[1], settings: {}, fields: [] };
+      continue;
+    }
+    if (!current) throw new Error(`Collection entry “${line}” needs a COLLECTION_NAME: header.`);
+    const field = line.match(/^FIELD\s+([A-Z][A-Z0-9_]*)\s*:\s*(.+)$/i);
+    if (field) {
+      const reservedFields = new Set(['INDEX', 'INDEX0', 'ROW_INDEX', 'ROW_INDEX0', 'COLUMN_INDEX', 'COLUMN_INDEX0', 'VALUE', 'VALUES', 'SOURCE_NAME']);
+      if (reservedFields.has(field[1])) throw new Error(`Collection field ${field[1]} is reserved for generated item context.`);
+      if (current.fields.some(item => item.name === field[1])) throw new Error(`Duplicate field ${field[1]} in ${current.name}.`);
+      current.fields.push({ name: field[1], spec: field[2].trim() });
+      continue;
+    }
+    const setting = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.+)$/i);
+    if (!setting) throw new Error(`Invalid collection entry: “${line}”.`);
+    const key = setting[1].toUpperCase();
+    if (key in current.settings) throw new Error(`Duplicate ${key} in collection ${current.name}.`);
+    current.settings[key] = setting[2].trim();
+  }
+  commit();
+
+  const names = new Set();
+  collections.forEach(collection => {
+    if (names.has(collection.name)) throw new Error(`Duplicate collection: ${collection.name}.`);
+    names.add(collection.name);
+  });
+  return collections;
+}
+
+function parseRepeatedAnswersSection(text, fallbackConfig) {
+  if (!String(text || '').trim()) return [];
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  const configs = [];
+  let current = null;
+
+  const commit = () => {
+    if (!current) return;
+    const values = current.values;
+    if (!values.SOURCE) throw new Error(`Repeated answer ${current.name} needs SOURCE.`);
+    if (!values.VALUE) throw new Error(`Repeated answer ${current.name} needs VALUE.`);
+    const normalized = normalizeAnswerConfig(values, current.name, fallbackConfig);
+    const mode = String(values.MODE || 'items').trim().toLowerCase();
+    if (!['items', 'columns'].includes(mode)) {
+      throw new Error(`Repeated answer ${current.name} MODE must be items or columns.`);
+    }
+    configs.push({
+      ...normalized,
+      groupName: current.name,
+      source: values.SOURCE.trim(),
+      mode,
+      valueExpression: values.VALUE.trim(),
+      labelTemplate: String(values.LABEL || `${current.name} {INDEX}`).trim()
+    });
+    current = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//')) continue;
+    const header = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*$/);
+    if (header) {
+      commit();
+      current = { name: header[1], values: {} };
+      continue;
+    }
+    const setting = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
+    if (!setting || !current) throw new Error(`Invalid Repeated Answers entry: “${line}”.`);
+    current.values[setting[1].toUpperCase()] = setting[2].trim();
+  }
+  commit();
+  return configs;
 }
 
 function parseDefinitionRule(spec) {
@@ -601,18 +820,26 @@ function parseSemanticAnswerSection(text) {
   ]);
   const result = {};
   let currentKey = null;
+  let blockMode = false;
   for (const rawLine of String(text).replace(/\r\n?/g, '\n').split('\n')) {
     const line = rawLine.trim();
-    if (!line || line.startsWith('//')) continue;
     const match = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
     if (match && supported.has(match[1].toUpperCase())) {
       currentKey = match[1].toUpperCase();
-      result[currentKey] = match[2].trim() === '|' ? '' : match[2].trim();
+      blockMode = match[2].trim() === '|';
+      result[currentKey] = blockMode ? '' : match[2].trim();
+      continue;
+    }
+    if (!line || line.startsWith('//')) {
+      if (blockMode && currentKey && result[currentKey]) result[currentKey] += '\n';
       continue;
     }
     if (!currentKey) throw new Error(`Invalid Semantic Answer entry: “${line}”.`);
-    result[currentKey] = [result[currentKey], line].filter(Boolean).join(' ');
+    result[currentKey] = result[currentKey]
+      ? `${result[currentKey]}${blockMode ? '\n' : ' '}${line}`
+      : line;
   }
+  Object.keys(result).forEach(key => { result[key] = String(result[key]).trim(); });
   return result;
 }
 
@@ -676,6 +903,109 @@ function resolveSeed(seedSpec, override) {
   return Math.floor(Math.random() * 4294967296) >>> 0;
 }
 
+function generateCollections(collections, variables, random) {
+  const trace = [];
+  for (const collection of collections || []) {
+    if (collection.type === 'matrix') {
+      const rows = resolveCollectionSize(collection.rowsExpression, variables, random, `${collection.name} ROWS`);
+      const columns = resolveCollectionSize(collection.columnsExpression, variables, random, `${collection.name} COLUMNS`);
+      const value = Array.from({ length: rows }, () =>
+        Array.from({ length: columns }, () => generateDefinitionValue(collection.valueRule, random))
+      );
+      variables[collection.name] = value;
+      trace.push({ name: collection.name, type: 'matrix', rows, columns, value });
+      continue;
+    }
+
+    const count = resolveCollectionSize(collection.countExpression, variables, random, `${collection.name} COUNT`);
+    const value = Array.from({ length: count }, (_, index) => {
+      if (collection.valueRule) return generateDefinitionValue(collection.valueRule, random);
+      const record = { INDEX: index + 1, INDEX0: index };
+      collection.fields.forEach(field => {
+        record[field.name] = generateDefinitionValue(field.rule, random);
+      });
+      return record;
+    });
+    variables[collection.name] = value;
+    trace.push({
+      name: collection.name,
+      type: 'list',
+      count,
+      fields: collection.fields.map(field => field.name),
+      value
+    });
+  }
+  return trace;
+}
+
+function resolveCollectionSize(expression, variables, random, label) {
+  const source = String(expression || '').trim();
+  let value;
+  if (/^-?\d+(?:\.\d+)?(?:\s*\.\.\s*-?\d+(?:\.\d+)?(?:\s*;\s*step\s*=\s*\d+(?:\.\d+)?)?)?$/.test(source)
+      || (source.includes(',') && !/[A-Za-z_]/.test(source))) {
+    value = generateDefinitionValue(parseDefinitionRule(source), random);
+  } else {
+    value = evaluateNumericExpression(source, variables);
+  }
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    throw new Error(`${label} must generate or evaluate to an integer from 1 to 100.`);
+  }
+  return value;
+}
+
+function resolveRepeatedAnswers(configs, variables) {
+  const answers = [];
+  for (const config of configs || []) {
+    const source = variables[config.source];
+    if (!Array.isArray(source)) throw new Error(`Repeated answer ${config.groupName} uses missing collection ${config.source}.`);
+    const mode = config.mode === 'columns' ? 'columns' : 'items';
+    if (mode === 'columns' && !source.every(item => Array.isArray(item))) {
+      throw new Error(`Repeated answer ${config.groupName} can use MODE: columns only with a matrix collection.`);
+    }
+    const items = mode === 'columns'
+      ? Array.from({ length: source[0]?.length || 0 }, (_, index) => source.map(rowValue => rowValue[index]))
+      : source;
+    items.forEach((item, index) => {
+      const local = createCollectionItemContext(item, index, config.source, mode);
+      const scope = { ...variables, ...local };
+      const answer = evaluateNumericExpression(config.valueExpression, scope);
+      if (typeof answer !== 'number' || !Number.isFinite(answer)) {
+        throw new Error(`Repeated answer ${config.groupName} item ${index + 1} did not produce a finite number.`);
+      }
+      const id = `${config.groupName}_${index + 1}`;
+      const answerUnit = resolveTextValue(config.unit, scope);
+      const answerConfig = { ...config, valueVariable: id };
+      answers.push({
+        id,
+        valueVariable: id,
+        label: renderTemplateText(config.labelTemplate, scope),
+        answer,
+        answerUnit,
+        formattedAnswer: formatConfiguredAnswer(answer, config, answerUnit),
+        acceptedAnswers: (config.acceptedAnswers || []).map(value => renderTemplateText(value, scope)),
+        answerConfig
+      });
+    });
+  }
+  return answers;
+}
+
+function createCollectionItemContext(item, index, sourceName, mode = 'items') {
+  const base = {
+    INDEX: index + 1,
+    INDEX0: index,
+    SOURCE_NAME: sourceName
+  };
+  if (mode === 'columns') {
+    return { ...base, COLUMN_INDEX: index + 1, COLUMN_INDEX0: index, VALUES: item, VALUE: item };
+  }
+  if (Array.isArray(item)) {
+    return { ...base, ROW_INDEX: index + 1, ROW_INDEX0: index, VALUES: item, VALUE: item };
+  }
+  if (item && typeof item === 'object') return { ...base, ...item, VALUE: item };
+  return { ...base, VALUE: item };
+}
+
 function generateDefinitionValue(rule, random) {
   if (rule.type === 'range') {
     const count = getRangeStepCount(rule);
@@ -726,8 +1056,11 @@ function applyAssignments(assignments, variables) {
   for (const assignment of assignments) {
     const substitutedExpression = substituteExpression(assignment.expression, variables);
     const value = evaluateNumericExpression(assignment.expression, variables);
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
       throw new Error(`${assignment.name} produced a non-finite result from “${assignment.expression}”.`);
+    }
+    if (value === undefined) {
+      throw new Error(`${assignment.name} produced no result from “${assignment.expression}”.`);
     }
     variables[assignment.name] = value;
     traces.push({
@@ -779,13 +1112,25 @@ function buildSemanticTemplateInstance({
   parsed,
   variables,
   mappingTrace,
+  collectionTrace,
   assignmentTrace,
   constraintTrace,
   seed,
   attempt
 }) {
   const requiredNames = new Set(extractPlaceholders(parsed.sections.question));
-  const questionSegments = renderQuestionSegments(parsed.sections.question, variables, requiredNames);
+  const requiredCollections = new Set(
+    parsed.collections
+      .map(collection => collection.name)
+      .filter(name => templateUsesCollection(parsed.sections.question, name))
+  );
+  const questionSegments = renderQuestionSegments(
+    parsed.sections.question,
+    variables,
+    requiredNames,
+    requiredCollections,
+    parsed.collections
+  );
   const question = questionSegments.map(segment => segment.text).join('');
   const referenceAnswer = renderTemplateText(parsed.semanticAnswer.REFERENCE, variables).trim();
   if (!referenceAnswer) throw new Error('The semantic reference answer is empty after template generation.');
@@ -811,6 +1156,10 @@ function buildSemanticTemplateInstance({
     seed,
     attempt,
     inputs,
+    collections: (collectionTrace || []).map(item => ({
+      ...item,
+      required: requiredCollections.has(item.name)
+    })),
     mappings: mappingTrace.map(mapping => ({
       ...mapping,
       outputs: mapping.outputs.map(output => ({
@@ -840,6 +1189,7 @@ function buildSemanticTemplateInstance({
     semanticConfig,
     variables,
     requiredInputs: [...requiredNames],
+    requiredCollections: [...requiredCollections],
     trace,
     seed,
     attempt,
@@ -857,28 +1207,174 @@ function renderFeedback(feedback, variables) {
   };
 }
 
-function renderQuestionSegments(questionTemplate, variables, requiredInputs) {
+function renderQuestionSegments(questionTemplate, variables, requiredInputs, requiredCollections = new Set(), collectionDefinitions = []) {
+  const segments = renderStructuredSegments(String(questionTemplate || ''), variables, {
+    requiredInputs,
+    requiredCollections,
+    collectionDefinitions
+  });
+  const rendered = segments.map(segment => segment.text).join('');
+  const unresolved = rendered.match(/\{\{[^}]+\}\}|\{[^}]+\}/g);
+  if (unresolved) throw new Error(`Unresolved template directive or placeholder: ${unresolved[0]}`);
+  return segments;
+}
+
+function renderStructuredSegments(source, variables, options) {
+  const segments = [];
+  let cursor = 0;
+  const directivePattern = /\{\{#(?:if|each)\b[^}]*\}\}|\{\{matrix\s+[A-Z][A-Z0-9_]*\s*\}\}/g;
+  let match;
+
+  while ((match = directivePattern.exec(source))) {
+    if (match.index > cursor) segments.push(...renderInlineSegments(source.slice(cursor, match.index), variables, options));
+    const directive = match[0];
+    const matrixMatch = directive.match(/^\{\{matrix\s+([A-Z][A-Z0-9_]*)\s*\}\}$/);
+    if (matrixMatch) {
+      const name = matrixMatch[1];
+      if (!(name in variables) || !Array.isArray(variables[name])) throw new Error(`Matrix directive uses missing collection ${name}.`);
+      segments.push({
+        type: 'value',
+        text: formatCollectionPlain(variables[name]),
+        variable: name,
+        required: options.requiredCollections.has(name),
+        collection: true
+      });
+      cursor = directivePattern.lastIndex;
+      continue;
+    }
+
+    const opening = directive.match(/^\{\{#(if|each)\s+(.+?)\s*\}\}$/);
+    if (!opening) throw new Error(`Invalid template directive: ${directive}`);
+    const kind = opening[1];
+    const argument = opening[2].trim();
+    const block = findStructuredBlock(source, directivePattern.lastIndex, kind);
+    if (!block) throw new Error(`Missing {{/${kind}}} for ${directive}.`);
+    const body = source.slice(directivePattern.lastIndex, block.elseStart ?? block.closeStart);
+    const alternate = block.elseStart == null ? '' : source.slice(block.elseEnd, block.closeStart);
+
+    if (kind === 'if') {
+      const passed = Boolean(evaluateBooleanExpression(argument, variables));
+      segments.push(...renderStructuredSegments(passed ? body : alternate, variables, options));
+    } else {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(argument)) throw new Error(`Each directive requires a collection name, received “${argument}”.`);
+      const collection = variables[argument];
+      if (!Array.isArray(collection)) throw new Error(`Each directive uses missing collection ${argument}.`);
+      collection.forEach((item, index) => {
+        const local = createCollectionItemContext(item, index, argument);
+        segments.push(...renderStructuredSegments(body, { ...variables, ...local }, {
+          ...options,
+          activeCollection: argument
+        }));
+      });
+    }
+    cursor = block.closeEnd;
+    directivePattern.lastIndex = cursor;
+  }
+
+  if (cursor < source.length) segments.push(...renderInlineSegments(source.slice(cursor), variables, options));
+  return segments;
+}
+
+function findStructuredBlock(source, contentStart, expectedKind) {
+  const tokenPattern = /\{\{#(if|each)\b[^}]*\}\}|\{\{else\}\}|\{\{\/(if|each)\}\}/g;
+  tokenPattern.lastIndex = contentStart;
+  let depth = 1;
+  let elseStart = null;
+  let elseEnd = null;
+  let match;
+  while ((match = tokenPattern.exec(source))) {
+    if (match[1]) {
+      depth += 1;
+      continue;
+    }
+    if (match[0] === '{{else}}' && depth === 1 && expectedKind === 'if') {
+      elseStart = match.index;
+      elseEnd = tokenPattern.lastIndex;
+      continue;
+    }
+    if (match[2]) {
+      depth -= 1;
+      if (depth === 0) {
+        if (match[2] !== expectedKind) throw new Error(`Mismatched template closing directive {{/${match[2]}}}.`);
+        return { elseStart, elseEnd, closeStart: match.index, closeEnd: tokenPattern.lastIndex };
+      }
+    }
+  }
+  return null;
+}
+
+function renderInlineSegments(text, variables, options) {
   const segments = [];
   const pattern = /\{([A-Z][A-Z0-9_]*)\}/g;
   let cursor = 0;
   let match;
-  while ((match = pattern.exec(questionTemplate))) {
-    if (match.index > cursor) segments.push({ type: 'text', text: questionTemplate.slice(cursor, match.index) });
+  while ((match = pattern.exec(text))) {
+    if (match.index > cursor) segments.push({ type: 'text', text: text.slice(cursor, match.index) });
     const name = match[1];
-    if (!(name in variables)) throw new Error(`Placeholder {${name}} has no definition or derived value.`);
-    segments.push({ type: 'value', text: String(variables[name]), variable: name, required: requiredInputs.has(name) });
+    if (!(name in variables)) throw new Error(`Placeholder {${name}} has no definition, collection field, or derived value.`);
+    const value = variables[name];
+    const collectionName = options.activeCollection || (options.requiredCollections.has(name) ? name : null);
+    const required = options.requiredInputs.has(name)
+      || (collectionName ? options.requiredCollections.has(collectionName) : false);
+    segments.push({
+      type: 'value',
+      text: formatTemplateValue(value),
+      variable: collectionName ? `${collectionName}.${name}` : name,
+      required,
+      collection: Array.isArray(value)
+    });
     cursor = pattern.lastIndex;
   }
-  if (cursor < questionTemplate.length) segments.push({ type: 'text', text: questionTemplate.slice(cursor) });
-  const unresolved = segments.map(segment => segment.text).join('').match(/\{[^}]+\}/g);
-  if (unresolved) throw new Error(`Unresolved placeholder: ${unresolved[0]}`);
+  if (cursor < text.length) segments.push({ type: 'text', text: text.slice(cursor) });
   return segments;
 }
 
 function renderTemplateText(text, variables) {
-  return String(text || '').replace(/\{([A-Z][A-Z0-9_]*)\}/g, (match, name) =>
-    name in variables ? String(variables[name]) : match
-  );
+  const requiredInputs = new Set();
+  const requiredCollections = new Set();
+  Object.keys(variables).forEach(name => {
+    if (Array.isArray(variables[name])) requiredCollections.add(name);
+  });
+  return renderStructuredSegments(String(text || ''), variables, {
+    requiredInputs,
+    requiredCollections,
+    collectionDefinitions: []
+  }).map(segment => segment.text).join('');
+}
+
+function formatTemplateValue(value) {
+  if (Array.isArray(value)) return formatCollectionPlain(value);
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([key]) => !['INDEX', 'INDEX0'].includes(key))
+      .map(([key, item]) => `${key}=${formatTemplateValue(item)}`)
+      .join(', ');
+  }
+  return String(value);
+}
+
+function formatCollectionPlain(collection) {
+  if (!Array.isArray(collection)) return formatTemplateValue(collection);
+  if (!collection.length) return '';
+  if (collection.every(item => Array.isArray(item))) {
+    return collection.map(rowValue => rowValue.map(formatTemplateValue).join(' ')).join('\n');
+  }
+  if (collection.every(item => item && typeof item === 'object' && !Array.isArray(item))) {
+    return collection.map((item, index) => {
+      const values = Object.entries(item)
+        .filter(([key]) => !['INDEX', 'INDEX0'].includes(key))
+        .map(([key, value]) => `${key}=${formatTemplateValue(value)}`)
+        .join(', ');
+      return `${index + 1}. ${values}`;
+    }).join('\n');
+  }
+  return collection.map(formatTemplateValue).join(', ');
+}
+
+function templateUsesCollection(text, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\{\\{(?:matrix|#each)\\s+${escaped}(?:\\s|\\}\\})`).test(String(text || ''))
+    || new RegExp(`\\{${escaped}\\}`).test(String(text || ''));
 }
 
 function resolveTextValue(value, variables) {
@@ -902,37 +1398,105 @@ function evaluateBooleanExpression(expression, variables) {
 
 function evaluateSanitizedExpression(expression, variables, allowBoolean) {
   const tokens = tokenizeExpression(expression, allowBoolean);
+  const identifiers = tokens.filter(token => /^[A-Za-z_][A-Za-z0-9_]*$/.test(token));
+  for (const identifier of identifiers) {
+    const upper = identifier.toUpperCase();
+    const lower = identifier.toLowerCase();
+    if (allowBoolean && ['AND', 'OR', 'NOT', 'TRUE', 'FALSE'].includes(upper)) continue;
+    if (ALLOWED_FUNCTIONS.includes(lower) || identifier in CONSTANTS) continue;
+    if (!(identifier in variables)) {
+      throw new Error(`Unknown ${allowBoolean ? 'constraint' : 'formula'} variable: ${identifier}`);
+    }
+  }
+
   const rendered = tokens.map(token => {
     const upper = token.toUpperCase();
     const lower = token.toLowerCase();
     if (allowBoolean && upper === 'AND') return '&&';
     if (allowBoolean && upper === 'OR') return '||';
     if (allowBoolean && upper === 'NOT') return '!';
+    if (allowBoolean && upper === 'TRUE') return 'true';
+    if (allowBoolean && upper === 'FALSE') return 'false';
     if (token === '^') return '**';
-    if (ALLOWED_FUNCTIONS.includes(lower)) return `Math.${lower === 'pow' ? 'pow' : lower}`;
-    if (token in CONSTANTS) return String(CONSTANTS[token]);
-    if (/^[A-Za-z_]/.test(token)) {
-      if (!(token in variables)) throw new Error(`Unknown ${allowBoolean ? 'constraint' : 'formula'} variable: ${token}`);
-      const value = variables[token];
-      if (!allowBoolean && typeof value !== 'number') {
-        throw new Error(`${token} is text. Add a mapping and use its numeric mapped variable in formulas.`);
-      }
-      return typeof value === 'string' ? JSON.stringify(value) : `(${String(value)})`;
-    }
+    if (ALLOWED_FUNCTIONS.includes(lower)) return `__fn_${lower}`;
     return token;
   }).join('');
 
+  const functionScope = createExpressionFunctionScope();
+  const scope = { ...CONSTANTS, ...variables, ...functionScope };
+  const names = Object.keys(scope).filter(name => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+  const values = names.map(name => scope[name]);
   try {
-    return Function(`"use strict"; return (${rendered});`)();
+    return Function(...names, `"use strict"; return (${rendered});`)(...values);
   } catch (error) {
     throw new Error(`Could not evaluate “${expression}”: ${error.message}`);
   }
 }
 
+function createExpressionFunctionScope() {
+  const numericValues = (value, fieldName = null) => {
+    let values;
+    if (fieldName !== null && fieldName !== undefined && fieldName !== '') {
+      if (!Array.isArray(value)) throw new Error('A field selector requires a list collection.');
+      values = value.map(item => item?.[String(fieldName)]);
+    } else if (Array.isArray(value)) {
+      values = value.flat(Infinity);
+    } else {
+      values = [value];
+    }
+    return values.map(Number).filter(Number.isFinite);
+  };
+  const flexibleMin = (...args) => {
+    const values = args.length === 1 && Array.isArray(args[0]) ? numericValues(args[0]) : args.map(Number);
+    return Math.min(...values);
+  };
+  const flexibleMax = (...args) => {
+    const values = args.length === 1 && Array.isArray(args[0]) ? numericValues(args[0]) : args.map(Number);
+    return Math.max(...values);
+  };
+  return {
+    __fn_abs: Math.abs,
+    __fn_round: Math.round,
+    __fn_floor: Math.floor,
+    __fn_ceil: Math.ceil,
+    __fn_min: flexibleMin,
+    __fn_max: flexibleMax,
+    __fn_sqrt: Math.sqrt,
+    __fn_pow: Math.pow,
+    __fn_count: value => Array.isArray(value) || typeof value === 'string' ? value.length : 0,
+    __fn_sum: (value, fieldName = null) => numericValues(value, fieldName).reduce((total, item) => total + item, 0),
+    __fn_average: (value, fieldName = null) => {
+      const values = numericValues(value, fieldName);
+      return values.length ? values.reduce((total, item) => total + item, 0) / values.length : NaN;
+    },
+    __fn_row: (matrix, index) => Array.isArray(matrix?.[Number(index)]) ? [...matrix[Number(index)]] : [],
+    __fn_column: (matrix, index) => Array.isArray(matrix) ? matrix.map(rowValue => rowValue?.[Number(index)]) : [],
+    __fn_cell: (matrix, rowIndex, columnIndex) => matrix?.[Number(rowIndex)]?.[Number(columnIndex)],
+    __fn_contains: (value, expected) => Array.isArray(value) ? value.flat(Infinity).includes(expected) : String(value).includes(String(expected)),
+    __fn_field: (list, fieldName) => Array.isArray(list) ? list.map(item => item?.[String(fieldName)]) : [],
+    __fn_sort: (value, fieldName = null) => {
+      if (!Array.isArray(value)) return [];
+      const copy = [...value];
+      return copy.sort((left, right) => {
+        const a = fieldName === null ? left : left?.[String(fieldName)];
+        const b = fieldName === null ? right : right?.[String(fieldName)];
+        return typeof a === 'number' && typeof b === 'number'
+          ? a - b
+          : String(a).localeCompare(String(b));
+      });
+    },
+    __fn_unique: (value, fieldName = null) => {
+      if (!Array.isArray(value)) return [];
+      const selected = fieldName === null ? value : value.map(item => item?.[String(fieldName)]);
+      return [...new Set(selected)];
+    }
+  };
+}
+
 function tokenizeExpression(expression, allowBoolean) {
   const pattern = allowBoolean
     ? /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|<=|>=|==|!=|&&|\|\||[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/%^<>,!]/g
-    : /[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/^,.]/g;
+    : /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/^%,]/g;
   const tokens = String(expression).match(pattern);
   if (!tokens || tokens.join('').replace(/\s/g, '') !== String(expression).replace(/\s/g, '')) {
     throw new Error(`Unsupported characters in ${allowBoolean ? 'constraint' : 'formula'}: ${expression}`);

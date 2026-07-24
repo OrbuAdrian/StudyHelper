@@ -12,7 +12,7 @@ The application coordinator. It binds controls, updates views, manages local sta
 
 ### `assets/js/core/config.js`
 
-Contains application constants, the Template Format v1.1 example, and `createEmptyState()`. Settings include `uiLanguage` and `contentLanguage`.
+Contains application constants, the backward-compatible template example, and `createEmptyState()`. Settings include `uiLanguage` and `contentLanguage`.
 
 ### `assets/js/core/i18n.js`
 
@@ -49,11 +49,27 @@ The authoritative reference answer is always retained in `semanticConfig.referen
 
 ### `assets/js/features/template-engine.js`
 
-Parses Template Format v1.1 and remains compatible with the original compact format. It handles deterministic and semantic templates, values, sets, integer and stepped decimal ranges, deterministic seeds, mappings, formulas, constraints, single and multiple answer configurations, semantic reference answers, feedback placeholders, dependency tracing, highlighted values, and calculation traces.
+Parses Template Format v2 while remaining compatible with v1.1 and the original compact format. It handles deterministic and semantic templates, scalar values, seeded matrices and lists, repeated and conditional plain-text rendering, multiline values, collection-aware formulas, constraints, fixed and repeated answer configurations, semantic reference answers, dependency tracing, highlighted values, and calculation traces.
 
 ### `assets/js/features/template-validator.js`
 
-Performs static analysis, deterministic randomized trials, and seed reproducibility checks for mathematical templates. Semantic templates use structural and instantiation checks without requiring numeric answer validation.
+Performs static analysis, deterministic randomized trials, seed reproducibility checks, and generated-structure previews for mathematical templates. It validates dynamic collection instantiation and repeated answer resolution through the same seeded trial path. Semantic templates use structural and instantiation checks without requiring numeric answer validation.
+
+## Dynamic template generation path
+
+Template instantiation proceeds in this order:
+
+1. generate scalar definitions;
+2. resolve scalar mappings;
+3. generate all seeded collections, including dimensions, rows, cells, list items, and record fields;
+4. evaluate early constraints whose inputs now exist;
+5. evaluate formula assignments and collection functions;
+6. evaluate derived constraints;
+7. render conditional blocks, repeated blocks, matrix directives, and placeholders;
+8. resolve fixed answer configurations and dynamic repeated answer groups;
+9. produce the concrete exercise, dependency highlights, and trace.
+
+Templates remain plain text. The renderer understands only the documented structural directives and never evaluates template-provided HTML, CSS, JavaScript, or browser events.
 
 ### `assets/js/features/quiz-blueprint.js`
 

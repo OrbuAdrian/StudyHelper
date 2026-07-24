@@ -1,136 +1,74 @@
-# Study Forge Template Format v1.1
+# Study Forge Template Format v2
 
-A template starts with the learner-facing exercise text. Generated values are inserted with uppercase placeholders such as `{DATA_AMOUNT}`. The remainder is divided into optional `##` sections.
+Template Format v2 extends the original scalar-placeholder format with dynamic plain-text structures. Existing v1.1 templates remain valid.
 
-## Template language metadata
+The authoring surface is still plain text. Templates do not accept HTML, CSS, JavaScript, event handlers, or external scripts.
 
-Templates may optionally declare the learner-facing language under `## Metadata`:
+## Supported sections
 
-```text
-LANGUAGE: en
-```
-
-or:
+Recommended order:
 
 ```text
-LANGUAGE: ro
-```
-
-When `LANGUAGE` is omitted, the application uses the current default content language. Section names and parser terms remain in English so templates stay portable, while question text, descriptions, hints, and solutions may be written in English or Romanian.
-
-
-## Complete example
-
-```text
-Calculate the time required in {OUTPUT_UNIT} to transmit {DATA_AMOUNT} KB of data on an asynchronous serial line configured at {BPS} bps, using {DATA_BITS} data bits, {PARITY} parity, and {STOP} stop bit(s).
-
-## Metadata
-
-TITLE: Asynchronous serial transmission time
-SUBJECT: Computer engineering
-TOPIC: Serial communication
-TYPE: single-answer
-DIFFICULTY: medium
-SEED: random
-TAGS: communication, transmission, bandwidth
-LANGUAGE: en
-MAX_CONSTRAINT_ATTEMPTS: 1000
-
-## Definitions
-
-DATA_AMOUNT: the amount of data to transmit in kilobytes (1.0..10.0; step=0.5)
-BPS: the transmission speed in bits per second (200..800; step=100)
-DATA_BITS: the number of data bits in one frame (5..8)
-PARITY: the parity mode (even, odd, none)
-STOP: the number of stop bits (1, 2)
-OUTPUT_UNIT: the requested answer unit (seconds, milliseconds)
-
-## Mappings
-
-PARITY_BITS: PARITY
-none=0
-even=1
-odd=1
-
-UNIT_MULTIPLIER: OUTPUT_UNIT
-seconds=1
-milliseconds=1000
-
-## Formula
-
-START = 1
-FRAME_BITS = START + DATA_BITS + PARITY_BITS + STOP
-TOTAL_DATA_BITS = DATA_AMOUNT * 1024 * 8
-TOTAL_FRAMES = TOTAL_DATA_BITS / DATA_BITS
-TIME_SECONDS = TOTAL_FRAMES * FRAME_BITS / BPS
-ANSWER = TIME_SECONDS * UNIT_MULTIPLIER
-
-## Constraints
-
-DATA_AMOUNT > 0
-BPS > 0
-DATA_BITS > 0
-FRAME_BITS <= 12
-ANSWER > 0
-ANSWER <= 1000000
-
-## Answer
-
-VALUE: ANSWER
-UNIT: OUTPUT_UNIT
-ROUND: 2
-TOLERANCE: 0.01
-TOLERANCE_TYPE: absolute
-EQUIVALENCE: numeric
-
-## Feedback
-
-HINT: Calculate the total data bits, determine the frame size, and account for every transmitted frame.
-SOLUTION: Calculate FRAME_BITS, then TOTAL_FRAMES, then divide the transmitted frame bits by BPS. Finally convert the result to {OUTPUT_UNIT}.
-```
-
-## Section order
-
-The recommended order is:
-
-```text
-Exercise text
+Learner-facing exercise text
 
 ## Metadata
 ## Definitions
 ## Mappings
+## Collections
 ## Formula
 ## Constraints
 ## Answer
 ## Answers
+## Repeated Answers
 ## Semantic Answer
 ## Choices
 ## Feedback
 ```
 
-Requirements depend on the template type:
+A deterministic template needs either `## Definitions` or `## Collections`, plus either `## Formula` or `## Repeated Answers`.
 
-- A deterministic mathematical template needs exercise text, `## Definitions`, and `## Formula`.
-- A fixed semantic template needs exercise text, semantic `TYPE` metadata, and `## Semantic Answer`; it may omit both `## Definitions` and `## Formula`.
-- A randomized semantic template may use definitions, mappings, formulas, and constraints before producing its question and reference answer.
+A semantic template needs learner-facing text, semantic `TYPE` metadata, and `## Semantic Answer`. Definitions, mappings, collections, formulas, and constraints are optional.
 
-Unknown sections are ignored with a validator warning.
+## Learner-facing text
 
-## Exercise text and placeholders
-
-The text before the first `##` section is displayed to the learner.
+Scalar and derived values use placeholders:
 
 ```text
 Find the area of a rectangle with length {LENGTH} and width {WIDTH}.
 ```
 
-Placeholder names must:
+Dynamic structures use plain-text directives:
 
-- start with an uppercase letter;
-- contain only uppercase letters, digits, and underscores;
-- have a corresponding definition, mapping output, or formula assignment.
+```text
+{{matrix MATRIX}}
 
-Values that influence the configured final answer are highlighted automatically.
+{{#each JOBS}}
+Job {INDEX}: arrival {ARRIVAL}, duration {DURATION}
+{{/each}}
+
+{{#if ASK_FOR_MAXIMUM == 1}}
+Find the largest value.
+{{else}}
+Find the smallest value.
+{{/if}}
+```
+
+Supported directives are:
+
+- `{{matrix NAME}}`: render a matrix as newline-separated rows.
+- `{{#each NAME}} ... {{/each}}`: repeat text once per matrix row or list item.
+- `{{#if EXPRESSION}} ... {{else}} ... {{/if}}`: render one conditional branch. The `else` branch is optional.
+
+Within an `each` block, these local placeholders are available:
+
+- `{INDEX}`: one-based item number.
+- `{INDEX0}`: zero-based item number.
+- `{VALUE}`: the current primitive item, row, or record.
+- `{VALUES}`: the current matrix row or column.
+- `{ROW_INDEX}` and `{ROW_INDEX0}` for matrix rows.
+- Record field names such as `{ARRIVAL}` and `{DURATION}`.
+
+Directives may be nested. Every opening block must have its matching closing directive.
 
 ## Metadata
 
@@ -144,84 +82,55 @@ TYPE:
 DIFFICULTY:
 SEED:
 TAGS:
+LANGUAGE:
 MAX_CONSTRAINT_ATTEMPTS:
 ```
 
-`TYPE` may describe `single-answer`, `multiple-choice`, `valid-statement`, or `phrase`. Template-generated exercises currently use the single-answer workflow unless custom choice behavior is added later.
+`SEED` accepts `random` or an integer from `0` to `4294967295`. The same template and seed reproduce all scalar values, collection dimensions, collection items, matrix cells, constraint retries, conditional branches, and answer fields.
 
-`SEED` accepts:
+## Multiline values
+
+Key-value sections support preserved multiline values with `|`:
 
 ```text
-SEED: random
-SEED: 184205
+## Feedback
+
+HINT: |
+  Add the values on each row.
+  Keep the original row order.
+
+EXPLANATION: |
+  The first line is part of the same explanation.
+  The second line continues it.
 ```
 
-A fixed seed must be an integer from `0` to `4294967295`. The same template and seed reproduce the same generated values, constraint retry sequence, question, and answer. Omitting `SEED` behaves like `SEED: random`.
-
-`MAX_CONSTRAINT_ATTEMPTS` defaults to `1000` and is clamped to a safe implementation limit.
+The same block syntax can be used for metadata text, feedback, answer text, choices, and semantic-answer values where the relevant term supports free text.
 
 ## Definitions
 
-General syntax:
+Definitions generate scalar values:
 
 ```text
 VARIABLE_NAME: description (value rule)
 ```
 
-### Fixed values
+Examples:
 
 ```text
-BPS: transmission speed (600)
-VOLTAGE: supply voltage (5.0)
-PROTOCOL: protocol name ("UART")
+FIXED_INTEGER: fixed value (600)
+FIXED_DECIMAL: fixed value (5.0)
+FIXED_TEXT: protocol name ("UART")
+INTEGER_RANGE: generated integer (5..8)
+DECIMAL_RANGE: generated decimal (1.0..10.0; step=0.5)
+NUMERIC_SET: selected value (1200, 2400, 4800)
+TEXT_SET: selected mode (even, odd, none)
 ```
 
-### Integer ranges
-
-Recommended syntax:
-
-```text
-DATA_BITS: data bits per frame (5..8)
-```
-
-Legacy syntax remains supported:
-
-```text
-DATA_BITS: data bits per frame (5-8)
-```
-
-Both endpoints are inclusive.
-
-### Decimal ranges with steps
-
-```text
-DATA_AMOUNT: amount in kilobytes (1.0..10.0; step=0.5)
-VOLTAGE: voltage level (-5.0..5.0; step=0.25)
-```
-
-The step must be positive. When the step does not divide the range evenly, the validator warns that the maximum endpoint cannot be generated.
-
-### Predefined sets
-
-Numeric set:
-
-```text
-STOP: stop bits (1, 2)
-```
-
-Text set:
-
-```text
-PARITY: parity mode (even, odd, none)
-```
-
-Mixed numeric and text sets are rejected.
+Ranges are inclusive. Legacy `5-8` ranges remain supported. Mixed numeric and text sets are rejected.
 
 ## Mappings
 
-Mappings convert a generated source value into another value used by formulas.
-
-Expanded syntax:
+Mappings convert one generated scalar value into another value:
 
 ```text
 PARITY_BITS: PARITY
@@ -230,38 +139,95 @@ even=1
 odd=1
 ```
 
-This creates `PARITY_BITS` from the selected `PARITY` value.
+The source must be a scalar definition. Every possible source value should have a mapping entry.
 
-Legacy compact syntax remains supported in `## Formula`:
+## Collections
+
+Collections generate structures whose size and contents can vary.
+
+### Matrix or grid
 
 ```text
-PARITY: none=0, even=1, odd=1
+## Collections
+
+MATRIX:
+TYPE: matrix
+ROWS: NR_ROWS
+COLUMNS: 2..5
+VALUE: 0..9
 ```
 
-The legacy form exposes the mapped result as both `PARITY_BITS` and `PARITY_VALUE`.
+`TYPE: grid` is an alias for `TYPE: matrix`.
 
-The validator checks that the source exists, all possible source values are covered, keys are unique, and the mapped result is used.
+`ROWS` and `COLUMNS` may be:
+
+- a fixed integer;
+- an integer range such as `2..5`;
+- a numeric set such as `2, 4, 6`;
+- a scalar expression such as `NR_ROWS` or `BASE_SIZE + 1`.
+
+`VALUE` uses the same fixed, range, stepped-range, or set syntax as a definition. Every matrix cell is generated independently from the seeded random sequence.
+
+Render the matrix directly:
+
+```text
+{{matrix MATRIX}}
+```
+
+Or repeat a line for each row:
+
+```text
+{{#each MATRIX}}
+Row {INDEX}: {VALUES}
+{{/each}}
+```
+
+### Primitive list
+
+```text
+NUMBERS:
+TYPE: list
+COUNT: 3..7
+VALUE: 1..20
+```
+
+A primitive list contains independently generated scalar values.
+
+### Record list
+
+```text
+JOBS:
+TYPE: list
+COUNT: 3..6
+FIELD ARRIVAL: 0..10
+FIELD DURATION: 1..8
+FIELD PRIORITY: 1..5
+```
+
+Each list item is a record with independently generated fields.
+
+Render the records:
+
+```text
+{{#each JOBS}}
+Job {INDEX}: arrival {ARRIVAL}, duration {DURATION}, priority {PRIORITY}
+{{/each}}
+```
+
+Collection sizes are limited to 100 rows or items per collection to prevent accidental browser freezes.
 
 ## Formula
 
-Each line defines a derived numeric variable:
+Assignments are evaluated from top to bottom:
 
 ```text
 VARIABLE = EXPRESSION
 ```
 
-The conventional final result is:
-
-```text
-ANSWER = EXPRESSION
-```
-
-Assignments are evaluated from top to bottom. Referencing a variable before it is defined is an error.
-
 Supported operators:
 
 ```text
-+  -  *  /  %  ^  ( )
++ - * / % ^ ( )
 ```
 
 Supported constants:
@@ -271,7 +237,7 @@ PI
 E
 ```
 
-Supported functions:
+Scalar functions:
 
 ```text
 abs()
@@ -284,44 +250,90 @@ sqrt()
 pow()
 ```
 
-Text variables cannot be used directly in numeric formulas. Convert them with a mapping first.
+Collection functions:
+
+```text
+count(COLLECTION)
+sum(COLLECTION)
+sum(LIST, "FIELD")
+average(COLLECTION)
+average(LIST, "FIELD")
+min(COLLECTION)
+max(COLLECTION)
+row(MATRIX, ZERO_BASED_ROW)
+column(MATRIX, ZERO_BASED_COLUMN)
+cell(MATRIX, ZERO_BASED_ROW, ZERO_BASED_COLUMN)
+contains(COLLECTION, VALUE)
+field(LIST, "FIELD")
+sort(COLLECTION)
+sort(LIST, "FIELD")
+unique(COLLECTION)
+unique(LIST, "FIELD")
+```
+
+Matrices are flattened by `sum`, `average`, `min`, and `max` when no field selector is supplied.
+
+Examples:
+
+```text
+TOTAL = sum(MATRIX)
+ROW_TOTAL = sum(row(MATRIX, SELECTED_ROW - 1))
+COLUMN_MAXIMUM = max(column(MATRIX, SELECTED_COLUMN - 1))
+TOTAL_DURATION = sum(JOBS, "DURATION")
+UNIQUE_PRIORITIES = count(unique(JOBS, "PRIORITY"))
+```
+
+Formula assignments may produce intermediate arrays, but configured deterministic final answers must be finite numeric values.
 
 ## Constraints
 
-Each line is a Boolean expression that must be true for an instance to be accepted.
+Each constraint must evaluate to true:
 
 ```text
-DATA_AMOUNT > 0
-A != B
-LENGTH > WIDTH
-NOT (DATA_BITS == 5 AND STOP == 2)
-VOLTAGE >= 1.5 AND VOLTAGE <= 12
+NR_ROWS >= 2
+count(JOBS) >= 3
+sum(JOBS, "DURATION") <= 40
+cell(MATRIX, 0, 0) != 0
+NOT (MODE == "hard" AND count(NUMBERS) < 5)
 ```
 
-Supported comparison operators:
+Supported comparisons:
 
 ```text
-==  !=  <  <=  >  >=
+== != < <= > >=
 ```
 
 Supported logical operators:
 
 ```text
-AND  OR  NOT
+AND OR NOT
 ```
 
-Arithmetic and formula functions may be used inside constraints.
-
-Constraints that reference only definitions and mapping outputs are evaluated before formulas. This makes safety constraints such as `DENOMINATOR != 0` effective before division. Constraints that reference derived formula variables are evaluated after formulas.
-
-When any constraint is false, the seeded generator advances and tries another value combination. Generation fails with a clear error after the maximum number of attempts.
+Collections are generated before formulas and constraints. A rejected attempt advances the deterministic seeded sequence and generates a complete new candidate instance.
 
 ## Answer
+
+A single deterministic answer uses:
+
+```text
+## Answer
+
+VALUE: ANSWER
+LABEL: Final answer
+UNIT: units
+ROUND: 2
+TOLERANCE: 0.01
+TOLERANCE_TYPE: absolute
+EQUIVALENCE: numeric
+ACCEPT: alternative answer
+```
 
 Supported terms:
 
 ```text
 VALUE:
+LABEL:
+TYPE:
 UNIT:
 ROUND:
 TOLERANCE:
@@ -330,84 +342,105 @@ EQUIVALENCE:
 ACCEPT:
 ```
 
-Example:
+## Answers
 
-```text
-VALUE: ANSWER
-UNIT: OUTPUT_UNIT
-ROUND: 2
-TOLERANCE: 0.01
-TOLERANCE_TYPE: absolute
-EQUIVALENCE: numeric
-ACCEPT: alternative answer, another accepted phrase
-```
-
-`VALUE` names the calculated variable used as the expected answer. Without an `## Answer` section, `ANSWER` is used when present; otherwise the final formula assignment is used.
-
-`UNIT` can be fixed text or the name of a generated variable.
-
-`ROUND` accepts an integer from `0` to `15`.
-
-`TOLERANCE_TYPE` accepts:
-
-```text
-absolute
-percentage
-```
-
-`EQUIVALENCE` accepts:
-
-```text
-exact
-numeric
-symbolic
-semantic
-combined
-```
-
-The current local template exercise workflow applies exact, numeric, and symbolic checks where supported. Semantic checks require Gemini.
-
-## Multiple deterministic answers
-
-Use `## Answers` when one generated exercise requires several independently graded mathematical answers. Each block starts with the calculated variable name and can override the normal answer settings:
+Use `## Answers` for a fixed number of independently graded results:
 
 ```text
 ## Answers
 
 AREA:
-LABEL: Rectangle area
+LABEL: Area
 UNIT: cm²
 ROUND: 0
-TOLERANCE: 0
-EQUIVALENCE: numeric
 
 PERIMETER:
-LABEL: Rectangle perimeter
+LABEL: Perimeter
 UNIT: cm
+ROUND: 0
+```
+
+## Repeated Answers
+
+Use `## Repeated Answers` when the number of answer fields depends on a generated collection.
+
+One answer per matrix row:
+
+```text
+## Repeated Answers
+
+ROW_SUMS:
+SOURCE: MATRIX
+MODE: items
+VALUE: sum(VALUE)
+LABEL: Sum of row {INDEX}
 ROUND: 0
 TOLERANCE: 0
 EQUIVALENCE: numeric
 ```
 
-Common defaults may remain under `## Answer`; individual entries under `## Answers` inherit those defaults and override only the terms they specify. A generated exercise is fully correct only when every configured answer is correct, while the result also retains per-answer feedback.
-
-## Semantic Answer
-
-Use this section for stated, explanatory, definitional, comparison, reasoning, or other non-formula answers:
+One answer per matrix column:
 
 ```text
-Explain why a higher cache associativity can improve the hit rate.
+COLUMN_SUMS:
+SOURCE: MATRIX
+MODE: columns
+VALUE: sum(VALUE)
+LABEL: Sum of column {INDEX}
+ROUND: 0
+```
 
-## Metadata
-TYPE: semantic
-LANGUAGE: en
+One answer per record-list item:
+
+```text
+JOB_END_TIMES:
+SOURCE: JOBS
+MODE: items
+VALUE: ARRIVAL + DURATION
+LABEL: Completion time for job {INDEX}
+ROUND: 0
+```
+
+Each repeated group supports the normal answer settings:
+
+```text
+SOURCE:
+MODE:
+VALUE:
+LABEL:
+TYPE:
+UNIT:
+ROUND:
+TOLERANCE:
+TOLERANCE_TYPE:
+EQUIVALENCE:
+ACCEPT:
+```
+
+`MODE` accepts `items` or `columns`. Matrix rows use `items`.
+
+A template may combine `## Answer`, `## Answers`, and `## Repeated Answers`. The generated exercise is fully correct only when every concrete answer field is correct.
 
 ## Semantic Answer
-REFERENCE: Higher associativity gives each memory block more possible cache locations, which reduces conflict misses and generally improves the hit rate, although hardware complexity and access time may increase.
+
+Semantic templates use an authoritative reference answer:
+
+```text
+## Metadata
+
+TYPE: semantic
+LANGUAGE: ro
+
+## Semantic Answer
+
+REFERENCE: |
+  Răspunsul de referință poate ocupa mai multe linii.
+  Toate liniile fac parte din același răspuns.
+
 STRICTNESS: moderate
 ```
 
-Supported terms are:
+Supported terms:
 
 ```text
 REFERENCE:
@@ -418,24 +451,13 @@ ACCEPTED_EXPRESSIONS:
 KNOWN_INCORRECT_CLAIMS:
 ```
 
-`REFERENCE` is authoritative. `STRICTNESS` accepts `lenient`, `moderate`, `strict`, or `exacting`. The four guidance lists are optional and use semicolons or vertical bars to separate entries.
+`STRICTNESS` accepts `lenient`, `moderate`, `strict`, or `exacting`.
 
-A reference answer may span multiple physical lines. Either continue directly after `REFERENCE:` or use a block marker:
-
-```text
-REFERENCE: |
-  The first sentence of the reference answer.
-  The second sentence continues the same answer.
-STRICTNESS: moderate
-```
-
-Continuation lines are joined into one semantic reference value. A fixed semantic template does not need `## Definitions`, `## Formula`, `## Constraints`, or numeric `## Answer` sections.
-
-Exercise Lab can save and generate semantic template instances after a structural check. It does not require the randomized mathematical validator. Gemini is required only to grade a learner's semantic answer; without Gemini, the exercise is marked ungradable.
+Semantic templates can use collections and dynamic question directives. Their reference answers and feedback can also contain scalar placeholders, loops, conditions, and matrix directives. Gemini is required only when grading a learner answer; without Gemini the attempt is ungradable.
 
 ## Choices
 
-The section and these terms are reserved for future multiple-choice template generation:
+The choices section remains reserved for future template-generated multiple-choice options:
 
 ```text
 ## Choices
@@ -445,8 +467,6 @@ DISTRACTOR: ANSWER / 10
 DISTRACTOR: ANSWER * 10
 SHUFFLE: true
 ```
-
-The parser preserves these values, but the current template generator does not yet construct multiple-choice options from them.
 
 ## Feedback
 
@@ -458,28 +478,72 @@ SOLUTION:
 EXPLANATION:
 ```
 
-Generated and calculated values can be inserted:
+Feedback may contain placeholders and dynamic directives. When custom feedback is omitted, Study Forge produces a calculation trace containing generated scalar inputs, required collections, mappings, formulas, constraints, and final answers.
+
+## Complete dynamic example
 
 ```text
-SOLUTION: Each frame contains {FRAME_BITS} bits, so the final result is {ANSWER}.
-```
+Consider the following generated matrix:
 
-When no custom solution or explanation is supplied, Study Forge generates a calculation trace from the relevant dependency chain.
+{{matrix MATRIX}}
 
-## Backward compatibility
+Calculate the sum of all elements and the sum of every row.
 
-The original minimal format remains valid:
+{{#if SHOW_NOTE == 1}}
+Rows are numbered from 1 in the answer labels.
+{{/if}}
 
-```text
-Question containing {VALUES}.
+## Metadata
+
+TITLE: Dynamic matrix sums
+TYPE: multiple-answer
+SEED: random
+LANGUAGE: en
 
 ## Definitions
 
-VALUE: description (1-10)
-MODE: description (even, odd, none)
+NR_ROWS: number of rows (2..4)
+NR_COLUMNS: number of columns (2..5)
+SHOW_NOTE: whether to display the row-numbering note (0, 1)
+
+## Collections
+
+MATRIX:
+TYPE: matrix
+ROWS: NR_ROWS
+COLUMNS: NR_COLUMNS
+VALUE: 0..9
 
 ## Formula
 
-MODE: even=1, odd=1, none=0
-ANSWER = VALUE + MODE_BITS
+TOTAL_SUM = sum(MATRIX)
+
+## Answer
+
+VALUE: TOTAL_SUM
+LABEL: Sum of all elements
+ROUND: 0
+
+## Repeated Answers
+
+ROW_SUMS:
+SOURCE: MATRIX
+MODE: items
+VALUE: sum(VALUE)
+LABEL: Sum of row {INDEX}
+ROUND: 0
+
+## Constraints
+
+TOTAL_SUM > 0
+
+## Feedback
+
+HINT: |
+  Add the elements in each generated row.
+  The matrix dimensions and values are generated from the stored seed.
 ```
+
+## Backward compatibility
+
+The original v1.1 sections, scalar placeholders, ranges, mappings, formulas, constraints, single answers, multiple fixed answers, semantic answers, seeds, highlighting, traces, template-driven quizzes, TXT export, and JSON export remain supported.

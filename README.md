@@ -7,7 +7,7 @@ Study Forge is a client-only study workspace built with HTML, CSS, and JavaScrip
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-template-quizzes
+cd study-forge-dynamic-templates-v2
 python3 -m http.server 8080
 ```
 
@@ -39,7 +39,7 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Lenient, moderate, strict, and exacting semantic validation.
 - Optional concept guidance entered manually or derived by Gemini from the reference answer.
 - Semantic questions become ungradable—not incorrect—when Gemini is unavailable.
-- Template Format v1.1 with deterministic and semantic templates, seeds, constraints, stepped decimal ranges, mappings, multi-answer settings, highlighting, validation, and calculation traces.
+- Template Format v2 with backward-compatible scalar templates plus dynamic matrices, grids, lists, conditional/repeated question blocks, multiline fields, collection formulas, repeated answer groups, seeded generation, highlighting, validation, and calculation traces.
 - Quiz blueprints with unlimited problem slots and independent saved-template candidate pools.
 - Mixed-language quizzes.
 - Local browser persistence and TXT/JSON export.
@@ -86,9 +86,9 @@ Open **Settings**, paste a Gemini API key, select a model, and test the connecti
 
 The optional **Remember API key** setting stores the key in `localStorage`. Without it, the key remains in `sessionStorage` for the current browser session. A client-only application cannot fully protect a browser-visible key, so use a restricted key and avoid remembering it on shared devices.
 
-## Template Format v1.1
+## Template Format v2
 
-The complete example is loaded automatically in the Template Engine. A detailed reference is available in [`TEMPLATE_FORMAT.md`](TEMPLATE_FORMAT.md).
+The Template Engine includes separate scalar and dynamic examples. A detailed reference is available in [`TEMPLATE_FORMAT.md`](TEMPLATE_FORMAT.md).
 
 Supported sections:
 
@@ -98,10 +98,12 @@ Question text with {PLACEHOLDERS}
 ## Metadata
 ## Definitions
 ## Mappings
+## Collections
 ## Formula
 ## Constraints
 ## Answer
 ## Answers
+## Repeated Answers
 ## Semantic Answer
 ## Choices
 ## Feedback
@@ -113,6 +115,11 @@ Important features include:
 - stepped decimal ranges: `(1.0..10.0; step=0.5)`;
 - fixed or random seeds;
 - expanded mappings;
+- generated matrices, grids, primitive lists, and record lists;
+- conditional question branches and repeated question lines;
+- multiline key-value blocks using `|`;
+- collection-aware formulas such as `sum`, `average`, `row`, `column`, and `cell`;
+- dynamic repeated answer fields generated per row, column, or list item;
 - Boolean constraints;
 - constraint-aware generation retries;
 - single or multiple configured deterministic answers;
@@ -147,6 +154,7 @@ Run all browser-independent tests with:
 node tests/startup-smoke.test.mjs
 node tests/template-validator.test.mjs
 node tests/template-format-v11.test.mjs
+node tests/template-format-v2.test.mjs
 node tests/quiz-blueprint.test.mjs
 node tests/semantic-exercise.test.mjs
 node tests/semantic-template.test.mjs
@@ -156,7 +164,7 @@ node tests/static-integration.test.mjs
 ## Project structure
 
 ```text
-study-forge-template-quizzes/
+study-forge-dynamic-templates-v2/
 ├── index.html
 ├── README.md
 ├── ARCHITECTURE.md
@@ -165,6 +173,7 @@ study-forge-template-quizzes/
 ├── tests/
 │   ├── template-validator.test.mjs
 │   ├── template-format-v11.test.mjs
+│   ├── template-format-v2.test.mjs
 │   ├── quiz-blueprint.test.mjs
 │   ├── semantic-exercise.test.mjs
 │   ├── semantic-template.test.mjs
