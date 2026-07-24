@@ -103,49 +103,18 @@ Exercise text
 ## Constraints
 ## Answer
 ## Answers
+## Semantic Answer
 ## Choices
 ## Feedback
 ```
 
-`## Answer` configures one expected answer. `## Answers` is optional and is used when one exercise requires several answer fields. Only the exercise text, `## Definitions`, and `## Formula` are required. Unknown sections are ignored with a validator warning.
+Requirements depend on the template type:
 
-## Multiple answers
+- A deterministic mathematical template needs exercise text, `## Definitions`, and `## Formula`.
+- A fixed semantic template needs exercise text, semantic `TYPE` metadata, and `## Semantic Answer`; it may omit both `## Definitions` and `## Formula`.
+- A randomized semantic template may use definitions, mappings, formulas, and constraints before producing its question and reference answer.
 
-Use `## Answers` when one exercise asks the learner to solve several related tasks. Each listed variable becomes its own answer box and is graded independently. The older `## Answer` section still works for ordinary single-answer templates.
-
-Simple form:
-
-```text
-## Answers
-
-FRAME_BITS
-TOTAL_FRAMES
-TIME_SECONDS
-```
-
-Labeled form with per-answer settings:
-
-```text
-## Answers
-
-FRAME_BITS:
-LABEL: Bits per frame
-ROUND: 0
-
-TOTAL_FRAMES:
-LABEL: Number of frames
-ROUND: 0
-
-TIME_SECONDS:
-LABEL: Transmission time
-UNIT: seconds
-ROUND: 2
-TOLERANCE: 0.01
-TOLERANCE_TYPE: absolute
-EQUIVALENCE: numeric
-```
-
-When `## Answers` is present, the first answer is still exposed through the legacy `answer` field for compatibility, while the full list is stored in `answerItems`. Feedback shows partial credit such as `2 of 3 answers correct`.
+Unknown sections are ignored with a validator warning.
 
 ## Exercise text and placeholders
 
@@ -397,6 +366,72 @@ combined
 ```
 
 The current local template exercise workflow applies exact, numeric, and symbolic checks where supported. Semantic checks require Gemini.
+
+## Multiple deterministic answers
+
+Use `## Answers` when one generated exercise requires several independently graded mathematical answers. Each block starts with the calculated variable name and can override the normal answer settings:
+
+```text
+## Answers
+
+AREA:
+LABEL: Rectangle area
+UNIT: cm²
+ROUND: 0
+TOLERANCE: 0
+EQUIVALENCE: numeric
+
+PERIMETER:
+LABEL: Rectangle perimeter
+UNIT: cm
+ROUND: 0
+TOLERANCE: 0
+EQUIVALENCE: numeric
+```
+
+Common defaults may remain under `## Answer`; individual entries under `## Answers` inherit those defaults and override only the terms they specify. A generated exercise is fully correct only when every configured answer is correct, while the result also retains per-answer feedback.
+
+## Semantic Answer
+
+Use this section for stated, explanatory, definitional, comparison, reasoning, or other non-formula answers:
+
+```text
+Explain why a higher cache associativity can improve the hit rate.
+
+## Metadata
+TYPE: semantic
+LANGUAGE: en
+
+## Semantic Answer
+REFERENCE: Higher associativity gives each memory block more possible cache locations, which reduces conflict misses and generally improves the hit rate, although hardware complexity and access time may increase.
+STRICTNESS: moderate
+```
+
+Supported terms are:
+
+```text
+REFERENCE:
+STRICTNESS:
+ESSENTIAL_CONCEPTS:
+SUPPORTING_CONCEPTS:
+ACCEPTED_EXPRESSIONS:
+KNOWN_INCORRECT_CLAIMS:
+```
+
+`REFERENCE` is authoritative. `STRICTNESS` accepts `lenient`, `moderate`, `strict`, or `exacting`. The four guidance lists are optional and use semicolons or vertical bars to separate entries.
+
+A reference answer may span multiple physical lines. Either continue directly after `REFERENCE:` or use a block marker:
+
+```text
+REFERENCE: |
+  The first sentence of the reference answer.
+  The second sentence continues the same answer.
+STRICTNESS: moderate
+```
+
+Continuation lines are joined into one semantic reference value. A fixed semantic template does not need `## Definitions`, `## Formula`, `## Constraints`, or numeric `## Answer` sections.
+
+Exercise Lab can save and generate semantic template instances after a structural check. It does not require the randomized mathematical validator. Gemini is required only to grade a learner's semantic answer; without Gemini, the exercise is marked ungradable.
 
 ## Choices
 

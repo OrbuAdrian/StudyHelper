@@ -1210,7 +1210,6 @@
   border-color: color-mix(in srgb, var(--amber) 40%, var(--line));
 }
 
-/* Multi-answer exercises */
 .multi-answer-list {
   display:grid;
   gap:12px
@@ -1218,24 +1217,23 @@
 
 .multi-answer-field {
   display:grid;
-  gap:7px
-}
-
-.multi-answer-field > span {
-  font-size:12px;
-  font-weight:800;
-  color:var(--text)
-}
-
-.multi-answer-field .textarea {
-  min-height:82px
-}
-
-.multi-trace-answer {
-  display:grid;
   gap:6px
 }
 
-.multi-trace-answer strong {
-  display:block
+.multi-answer-field > span {
+  color:var(--text);
+  font-size:12px;
+  font-weight:700
+}
+
+.exercise-template-note {
+  margin:12px 0 0;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.5
+}
+
+.trace-answer-list {
+  display:grid;
+  gap:8px
 }

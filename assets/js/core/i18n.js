@@ -74,7 +74,7 @@ const exactRomanian = new Map(Object.entries({
   'Workspace': 'Spațiu de lucru',
   'Focused learning workspace': 'Spațiu de învățare concentrată',
   'Turn any topic into a clear path to mastery.': 'Transformă orice subiect într-un traseu clar spre stăpânire.',
-  'Bring a topic, TXT file, or PDF. Generate one useful learning item at a time, then refine, practise, and assemble your best exercises into a quiz.': 'Adaugă un subiect, un fișier TXT sau PDF. Generează câte un material util, apoi rafinează, exersează și reunește cele mai bune exerciții într-un test.',
+  'Bring a topic, TXT file, or PDF. Generate one useful learning item at a time, then refine, practise, and use saved templates to assemble randomized quizzes.': 'Adaugă un subiect, un fișier TXT sau PDF. Generează câte un material util, apoi rafinează, exersează și folosește șabloanele salvate pentru teste randomizate.',
   'Add study material': 'Adaugă material de studiu',
   'Open exercise lab': 'Deschide laboratorul',
   'Understand': 'Înțelege',
@@ -91,7 +91,7 @@ const exactRomanian = new Map(Object.entries({
   'Generate an exercise': 'Generează un exercițiu',
   'Use Gemini, a direct prompt, or a reusable template.': 'Folosește Gemini, introducere directă sau un șablon reutilizabil.',
   'Build a quiz': 'Creează un test',
-  'Collect generated exercises and control feedback timing.': 'Reunește exerciții și controlează momentul feedbackului.',
+  'Select saved templates, generate fresh problem instances, and control feedback timing.': 'Selectează șabloane salvate, generează instanțe noi de probleme și controlează momentul feedbackului.',
   'History': 'Istoric',
   'Recent work': 'Activitate recentă',
   'View library': 'Vezi biblioteca',
@@ -175,6 +175,11 @@ const exactRomanian = new Map(Object.entries({
   'Accepted expressions': 'Expresii echivalente acceptate',
   'Known incorrect claims': 'Afirmații incorecte cunoscute',
   'Randomized assessment': 'Evaluare randomizată',
+  'Quiz problems now use saved templates directly and generate fresh values when the quiz starts.': 'Problemele testului folosesc direct șabloanele salvate și generează valori noi la pornirea testului.',
+  'Semantic template is ready': 'Șablonul semantic este pregătit',
+  'Structural check passed · numeric answer validation not required': 'Verificare structurală reușită · validarea numerică a răspunsului nu este necesară',
+  'The question and authoritative reference answer can be instantiated successfully.': 'Întrebarea și răspunsul de referință autoritar pot fi instanțiate cu succes.',
+  'Candidate templates for problem': 'Șabloane candidate pentru problemă',
   'Build a multi-problem quiz': 'Construiește un test cu mai multe probleme',
   'Add problem': 'Adaugă problemă',
   'Start quiz': 'Începe testul',
@@ -235,7 +240,6 @@ const exactRomanian = new Map(Object.entries({
   'Exam review': 'Recapitulare pentru examen',
   'Check answer': 'Verifică răspunsul',
   'Show solution': 'Arată soluția',
-  'Add as quiz problem': 'Adaugă ca problemă în test',
   'Export JSON': 'Exportă JSON',
   'Calculation trace': 'Trasarea calculului',
   'Highlighted values are required for the solution.': 'Valorile evidențiate sunt necesare pentru soluție.',
@@ -250,6 +254,18 @@ const exactRomanian = new Map(Object.entries({
   'Reading file…': 'Se citește fișierul…',
   'The generated reference answer becomes the authoritative grading standard.': 'Răspunsul de referință generat devine standardul autoritar de evaluare.',
   'Use the complete format or only the sections your exercise needs.': 'Folosește formatul complet sau doar secțiunile necesare exercițiului.',
+  'The text before the first section is the learner-facing question. Insert generated values with {VARIABLE}. Mathematical templates use Definitions and Formula; fixed semantic templates may use only Metadata and Semantic Answer.': 'Textul dinaintea primei secțiuni este întrebarea afișată cursantului. Introdu valorile generate cu {VARIABLE}. Șabloanele matematice folosesc Definitions și Formula; șabloanele semantice fixe pot folosi doar Metadata și Semantic Answer.',
+  'Mathematical randomized tests': 'Teste matematice randomizate',
+  'Use ## Answers with one variable block per answer when a problem requires multiple results.': 'Folosește ## Answers cu câte un bloc de variabilă pentru fiecare răspuns atunci când problema necesită mai multe rezultate.',
+  'Semantic Answer terms': 'Termenii răspunsului semantic',
+  'Semantic templates can be instantiated without numeric validation. Gemini is required only for grading the learner response.': 'Șabloanele semantice pot fi instanțiate fără validare numerică. Gemini este necesar doar pentru evaluarea răspunsului cursantului.',
+  'Deterministic templates currently generate single-answer or multi-answer free-response instances.': 'Șabloanele deterministe generează în prezent instanțe cu răspuns liber unic sau multiplu.',
+  'Save a template first': 'Salvează mai întâi un șablon',
+  'Quiz problem candidates are generated from templates in your local library.': 'Candidații pentru problemele testului sunt generați din șabloanele bibliotecii locale.',
+  'One template is chosen randomly and instantiated with fresh allowed values when the quiz starts.': 'La pornirea testului este ales aleator un șablon și este instanțiat cu valori noi permise.',
+  'Select at least one candidate template.': 'Selectează cel puțin un șablon candidat.',
+  'A semantic exercise instance was created. Gemini will grade it when available.': 'A fost creată o instanță de exercițiu semantic. Gemini o va evalua când este disponibil.',
+  'The structure and reference answer are valid. Numeric randomized validation is not required.': 'Structura și răspunsul de referință sunt valide. Validarea numerică randomizată nu este necesară.',
   'Load complete example': 'Încarcă exemplul complet',
   'Exercise template': 'Șablon de exercițiu',
   'Template name': 'Numele șablonului',
@@ -277,11 +293,11 @@ const exactRomanian = new Map(Object.entries({
   'The reference answer is authoritative. Gemini judges equivalent wording according to strictness.': 'Răspunsul de referință este autoritar. Gemini evaluează formulările echivalente în funcție de nivelul de rigoare.',
   'Semantic exercises become ungradable when Gemini is unavailable.': 'Exercițiile semantice devin neevaluabile când Gemini nu este disponibil.',
   'Required keywords': 'Cuvinte-cheie obligatorii',
-  'Add as many problem slots as needed. For every slot, choose one or more saved exercises; one candidate is selected randomly whenever the quiz starts.': 'Adaugă oricâte poziții de problemă sunt necesare. Pentru fiecare poziție, alege unul sau mai multe exerciții salvate; la pornirea testului este selectat aleator un candidat.',
+  'Add as many problem slots as needed. For every slot, choose one or more saved templates; one template is selected and instantiated with fresh allowed values whenever the quiz starts.': 'Adaugă oricâte poziții de problemă sunt necesare. Pentru fiecare poziție, alege unul sau mai multe șabloane salvate; la pornirea testului este selectat un șablon și este generată o instanță cu valori noi permise.',
   'problem slots in the current quiz': 'poziții de problemă în testul curent',
   'Clear all': 'Șterge tot',
   'Your quiz has no problems': 'Testul nu conține probleme',
-  'Save exercises to the library, then add a problem and select its candidate pool.': 'Salvează exerciții în bibliotecă, apoi adaugă o problemă și selectează lista de candidați.',
+  'Save templates in Exercise Lab, then add a problem and select its template candidate pool.': 'Salvează șabloane în Laboratorul de exerciții, apoi adaugă o problemă și selectează lista de șabloane candidate.',
   'Randomize the resolved problem order when the quiz begins.': 'Amestecă ordinea problemelor selectate când începe testul.',
   'Summaries': 'Rezumate',
   'Exercises': 'Exerciții',
@@ -360,7 +376,8 @@ export function t(key, language = 'en', params = {}) {
 
 export function translateInterface(root, language = 'en') {
   document.documentElement.lang = language;
-  const walker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
+  const showText = globalThis.NodeFilter?.SHOW_TEXT ?? 4;
+  const walker = document.createTreeWalker(root || document.body, showText);
   const textNodes = [];
   while (walker.nextNode()) textNodes.push(walker.currentNode);
 

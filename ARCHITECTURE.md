@@ -49,19 +49,43 @@ The authoritative reference answer is always retained in `semanticConfig.referen
 
 ### `assets/js/features/template-engine.js`
 
-Parses Template Format v1.1 and remains compatible with the original compact format. It handles values, sets, integer and stepped decimal ranges, deterministic seeds, mappings, formulas, constraints, answer formatting, feedback placeholders, dependency tracing, highlighted values, and calculation traces.
+Parses Template Format v1.1 and remains compatible with the original compact format. It handles deterministic and semantic templates, values, sets, integer and stepped decimal ranges, deterministic seeds, mappings, formulas, constraints, single and multiple answer configurations, semantic reference answers, feedback placeholders, dependency tracing, highlighted values, and calculation traces.
 
 ### `assets/js/features/template-validator.js`
 
-Performs static analysis, deterministic randomized trials, and seed reproducibility checks. It reports structured issues and sample traces.
+Performs static analysis, deterministic randomized trials, and seed reproducibility checks for mathematical templates. Semantic templates use structural and instantiation checks without requiring numeric answer validation.
 
 ### `assets/js/features/quiz-blueprint.js`
 
-Defines quiz problem slots separately from exercises. Each slot stores candidate exercise IDs and snapshots, and resolves one random exercise when a quiz begins.
+Defines quiz problem slots separately from exercises. Each new slot stores candidate template IDs and snapshots. When a quiz begins, the module selects one template per slot and asks the template engine to instantiate a fresh concrete exercise. Legacy fixed-exercise candidates are retained only for migration compatibility.
 
 ### `assets/js/features/answer-validation.js`
 
 Contains deterministic validation: numeric comparison, mathematical-expression equivalence, and optional keyword checks. Semantic validation is intentionally isolated in `semantic-exercise.js` and Gemini.
+
+
+## Template-based quiz resolution
+
+A saved quiz stores template references rather than generated exercise values:
+
+```json
+{
+  "id": "problem-slot-id",
+  "candidateTemplateIds": ["template-a", "template-b"],
+  "templateSnapshots": {}
+}
+```
+
+At quiz start, each slot is resolved in two stages:
+
+1. select one candidate template;
+2. instantiate that template, producing a new seed, values, answer configuration, and concrete question.
+
+The generated exercise records `sourceTemplateId`, `sourceTemplateName`, and `templateSeed` for traceability. The quiz blueprint remains reusable and does not change when an instance is generated.
+
+## Semantic template path
+
+A semantic template is identified by a semantic `TYPE` or by the presence of `## Semantic Answer`. It can omit `## Definitions` and `## Formula`. Exercise Lab performs a structural instantiation check, creates a normal semantic exercise instance, and defers learner-answer grading to Gemini. This path does not require numeric randomized validation.
 
 ## Semantic exercise data model
 
@@ -139,8 +163,3 @@ CSS is loaded in dependency order:
 5. Coordinate the feature from `app.js`.
 6. Extend state migration when the stored schema changes.
 7. Add a browser-independent test under `tests/`.
-
-
-## Multi-answer template exercises
-
-Template-generated exercises may include `## Answers`. The template engine resolves each configured answer variable, stores the full list in `answerItems`, and keeps the first answer in the legacy `answer` field for compatibility. The UI renders one input per answer item, validates each response independently, and reports partial credit. Quiz attempts preserve object-shaped answer submissions for these exercises.

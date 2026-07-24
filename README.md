@@ -7,11 +7,25 @@ Study Forge is a client-only study workspace built with HTML, CSS, and JavaScrip
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-bilingual-semantic
+cd study-forge-template-quizzes
 python3 -m http.server 8080
 ```
 
 Open `http://localhost:8080` in a modern browser.
+
+
+## Startup and local serving
+
+Do not open `index.html` directly with a `file://` URL. Study Forge uses native JavaScript modules, which browsers block or restrict when loaded directly from the filesystem.
+
+Use one of the included launchers:
+
+```text
+Windows: serve-study-forge.bat
+macOS/Linux: ./serve-study-forge.sh
+```
+
+Then open `http://localhost:8080`. If startup fails, the page now displays a visible diagnostic instead of leaving a static-looking but inactive interface.
 
 ## Main capabilities
 
@@ -19,14 +33,14 @@ Open `http://localhost:8080` in a modern browser.
 - Independent content-language selection for summaries and exercises.
 - Topic, pasted-text, TXT, and PDF study sources.
 - Gemini-generated summaries in English or Romanian.
-- Deterministic multiple-choice and single-answer exercises.
+- Deterministic single-answer and multi-answer template exercises.
 - Semantic explanation, definition, comparison, reasoning, and phrase-completion exercises.
 - User-approved reference answers for semantic grading.
 - Lenient, moderate, strict, and exacting semantic validation.
 - Optional concept guidance entered manually or derived by Gemini from the reference answer.
 - Semantic questions become ungradable—not incorrect—when Gemini is unavailable.
-- Template Format v1.1 with seeds, constraints, stepped decimal ranges, mappings, single-answer and multi-answer settings, highlighting, validation, and calculation traces.
-- Quiz blueprints with unlimited problem slots and independent random candidate pools.
+- Template Format v1.1 with deterministic and semantic templates, seeds, constraints, stepped decimal ranges, mappings, multi-answer settings, highlighting, validation, and calculation traces.
+- Quiz blueprints with unlimited problem slots and independent saved-template candidate pools.
 - Mixed-language quizzes.
 - Local browser persistence and TXT/JSON export.
 
@@ -59,6 +73,8 @@ Strictness controls how Gemini treats paraphrases, omissions, terminology, and i
 
 Semantic exercises have no keyword-only fallback. Without Gemini they are recorded as ungradable, and quiz percentages use only gradable problems.
 
+Semantic templates use `## Semantic Answer` and may omit `## Definitions` and `## Formula` when the question is fixed. They can be saved and instantiated from Exercise Lab after a structural check; randomized mathematical validation is not required. Gemini is needed only when the learner's answer is graded.
+
 ## Gemini setup
 
 Open **Settings**, paste a Gemini API key, select a model, and test the connection. Gemini is used only for:
@@ -86,6 +102,7 @@ Question text with {PLACEHOLDERS}
 ## Constraints
 ## Answer
 ## Answers
+## Semantic Answer
 ## Choices
 ## Feedback
 ```
@@ -98,7 +115,9 @@ Important features include:
 - expanded mappings;
 - Boolean constraints;
 - constraint-aware generation retries;
-- answer rounding, tolerance, equivalence, alternatives, units, and optional multi-answer fields;
+- single or multiple configured deterministic answers;
+- semantic reference answers with strictness and optional concept guidance;
+- answer rounding, tolerance, equivalence, alternatives, and units;
 - dependency-based value highlighting;
 - template validation and calculation traces.
 
@@ -106,14 +125,17 @@ Templates may include `LANGUAGE: en` or `LANGUAGE: ro` under `## Metadata`. When
 
 ## Quiz blueprints
 
-Exercises and quizzes are distinct objects:
+Exercises, templates, and quizzes are distinct objects:
 
-- An **exercise** is one concrete question with its answer and validation rules.
+- An **exercise** is one concrete question with already resolved values, its answer, and validation rules.
+- A **template** is a reusable generator for deterministic or semantic exercise instances.
 - A **quiz** is a reusable blueprint containing any number of problem slots.
-- Every problem slot contains one or more candidate exercises.
-- Starting a quiz selects one candidate independently for each problem.
-- Optional shuffling changes the order of the resolved problems.
-- JSON exports preserve the reusable blueprint; TXT exports create one concrete randomized instance.
+- Every new problem slot selects one or more saved templates as its candidate pool.
+- Starting a quiz first chooses one template independently for every slot, then instantiates it with a fresh seed and fresh allowed values.
+- Reopening or restarting the same quiz can therefore produce different concrete questions while preserving each template's definitions and constraints.
+- Saved exercises are no longer required when building new quizzes. Older exercise-based quiz blueprints remain readable through migration snapshots.
+- Optional shuffling changes the order of the newly resolved problems.
+- JSON exports preserve the template-based blueprint; TXT exports create one concrete randomized quiz instance.
 
 Quiz results track `score`, `graded`, and `ungradable`. Semantic questions without Gemini are excluded from the graded percentage.
 
@@ -122,17 +144,19 @@ Quiz results track `score`, `graded`, and `ungradable`. Semantic questions witho
 Run all browser-independent tests with:
 
 ```bash
+node tests/startup-smoke.test.mjs
 node tests/template-validator.test.mjs
 node tests/template-format-v11.test.mjs
 node tests/quiz-blueprint.test.mjs
 node tests/semantic-exercise.test.mjs
+node tests/semantic-template.test.mjs
 node tests/static-integration.test.mjs
 ```
 
 ## Project structure
 
 ```text
-study-forge-bilingual-semantic/
+study-forge-template-quizzes/
 ├── index.html
 ├── README.md
 ├── ARCHITECTURE.md
@@ -143,6 +167,8 @@ study-forge-bilingual-semantic/
 │   ├── template-format-v11.test.mjs
 │   ├── quiz-blueprint.test.mjs
 │   ├── semantic-exercise.test.mjs
+│   ├── semantic-template.test.mjs
+│   ├── startup-smoke.test.mjs
 │   └── static-integration.test.mjs
 └── assets/
     ├── css/
@@ -177,4 +203,4 @@ study-forge-bilingual-semantic/
 - math.js for expression equivalence
 - Google Fonts for typography
 
-The template engine, quiz blueprint resolution, local storage, TXT handling, direct deterministic exercises, numeric checks, and symbolic checks do not require Gemini.
+Template parsing and instantiation, quiz blueprint resolution, local storage, TXT handling, direct deterministic exercises, numeric checks, and symbolic checks do not require Gemini. Semantic template instances can also be generated without Gemini; only semantic answer grading requires Gemini.

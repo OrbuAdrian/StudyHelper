@@ -25,7 +25,8 @@ export function validateTemplate(templateText, options = {}) {
     };
   }
 
-  runStaticChecks(parsed, issues);
+  if (parsed.semantic) runSemanticStaticChecks(parsed, issues);
+  else runStaticChecks(parsed, issues);
   const trialResult = runTrialChecks(parsed, requestedRuns, issues);
   runSeedChecks(parsed, issues);
 
@@ -36,6 +37,98 @@ export function validateTemplate(templateText, options = {}) {
     trials: trialResult.summary,
     sampleInstances: trialResult.samples
   };
+}
+
+
+function runSemanticStaticChecks(parsed, issues) {
+  const definitionNames = new Set(parsed.definitions.map(item => item.name));
+  const assignmentNames = new Set(parsed.assignments.map(item => item.name));
+  const mappedOutputNames = new Set(parsed.mappings.flatMap(item => item.outputNames));
+  const knownVariables = new Set([...definitionNames, ...assignmentNames, ...mappedOutputNames]);
+  const semanticText = [
+    parsed.sections.question,
+    parsed.semanticAnswer?.REFERENCE,
+    parsed.semanticAnswer?.ESSENTIAL_CONCEPTS,
+    parsed.semanticAnswer?.SUPPORTING_CONCEPTS,
+    parsed.semanticAnswer?.ACCEPTED_EXPRESSIONS,
+    parsed.semanticAnswer?.KNOWN_INCORRECT_CLAIMS,
+    parsed.feedback?.HINT,
+    parsed.feedback?.SOLUTION,
+    parsed.feedback?.EXPLANATION
+  ].filter(Boolean).join('\n');
+
+  parsed.unknownSections.forEach(name => issues.push(issue(
+    'warning',
+    'unknown-section',
+    `Section ## ${name} is not part of the supported template format and will be ignored.`
+  )));
+
+  extractPlaceholders(semanticText).forEach(name => {
+    if (!knownVariables.has(name)) {
+      issues.push(issue('error', 'undefined-placeholder', `Placeholder {${name}} is not defined and is not produced by a formula.`));
+    }
+  });
+
+  parsed.definitions.forEach(definition => {
+    if (definition.rule.type !== 'range') return;
+    const span = definition.rule.max - definition.rule.min;
+    const steps = span / definition.rule.step;
+    if (Math.abs(steps - Math.round(steps)) > 1e-9) issues.push(issue(
+      'warning',
+      'uneven-step-range',
+      `${definition.name} uses step ${definition.rule.step}, which does not land exactly on the maximum ${definition.rule.max}.`
+    ));
+  });
+
+  parsed.mappings.forEach(mapping => {
+    const definition = parsed.definitions.find(item => item.name === mapping.sourceName);
+    if (!definition) {
+      issues.push(issue('error', 'mapping-without-definition', `Mapping ${mapping.outputName} uses missing source definition ${mapping.sourceName}.`));
+      return;
+    }
+    const possibleValues = getDefinitionPossibleValues(definition);
+    if (!possibleValues) return;
+    const possibleKeys = possibleValues.map(value => String(value).trim().toLowerCase());
+    const missing = possibleKeys.filter(key => !(key in mapping.values));
+    if (missing.length) issues.push(issue(
+      'error',
+      'incomplete-mapping',
+      `${mapping.outputName} has no mapped result for ${mapping.sourceName}: ${missing.slice(0, 20).join(', ')}${missing.length > 20 ? '…' : ''}.`
+    ));
+  });
+
+  const available = new Set([...definitionNames, 'PI', 'E']);
+  parsed.mappings.forEach(mapping => {
+    if (definitionNames.has(mapping.sourceName)) mapping.outputNames.forEach(name => available.add(name));
+  });
+  parsed.assignments.forEach(assignment => {
+    extractIdentifiers(assignment.expression).forEach(name => {
+      if (!available.has(name)) issues.push(issue(
+        'error',
+        assignmentNames.has(name) ? 'forward-reference' : 'unknown-formula-variable',
+        assignmentNames.has(name)
+          ? `${assignment.name} uses ${name} before ${name} is calculated.`
+          : `${assignment.name} uses unknown formula variable ${name}.`
+      ));
+    });
+    available.add(assignment.name);
+  });
+  parsed.constraints.forEach(constraint => {
+    extractIdentifiers(constraint.expression).forEach(name => {
+      if (!available.has(name)) issues.push(issue(
+        'error',
+        'unknown-constraint-variable',
+        `Constraint “${constraint.expression}” uses unknown variable ${name}.`
+      ));
+    });
+  });
+
+  const strictness = String(parsed.semanticAnswer?.STRICTNESS || 'moderate').trim().toLowerCase();
+  if (!['lenient', 'moderate', 'strict', 'exacting'].includes(strictness)) issues.push(issue(
+    'error',
+    'invalid-semantic-strictness',
+    'STRICTNESS must be lenient, moderate, strict, or exacting.'
+  ));
 }
 
 function runStaticChecks(parsed, issues) {
@@ -50,7 +143,6 @@ function runStaticChecks(parsed, issues) {
   const placeholders = extractPlaceholders(parsed.sections.question);
   const placeholderSet = new Set(placeholders);
   const answerDependencies = resolveAnswerDependencies(parsed);
-  const answerVariables = new Set((parsed.answerConfigs || [parsed.answerConfig]).map(config => config?.valueVariable).filter(Boolean));
   const requiredDefinitions = parsed.definitions
     .map(item => item.name)
     .filter(name => answerDependencies.has(name));
@@ -66,8 +158,8 @@ function runStaticChecks(parsed, issues) {
       issues.push(issue('error', 'undefined-placeholder', `Placeholder {${name}} is not defined and is not produced by a formula.`));
       return;
     }
-    if (answerVariables.has(name)) {
-      issues.push(issue('error', 'answer-exposed', `{${name}} exposes an expected answer inside the exercise question.`));
+    if (name === parsed.answerVariable) {
+      issues.push(issue('error', 'answer-exposed', `{${name}} exposes the expected answer inside the exercise question.`));
     } else if (assignmentNames.has(name) || mappedOutputNames.has(name)) {
       issues.push(issue('warning', 'derived-value-exposed', `{${name}} is a calculated value. Showing it may remove a required solution step.`));
     }
@@ -181,17 +273,11 @@ function runStaticChecks(parsed, issues) {
     });
   });
 
-  const configuredAnswers = parsed.answerConfigs || [parsed.answerConfig];
-  if (!configuredAnswers.length || !configuredAnswers.some(config => config?.valueVariable)) {
+  if (!parsed.answerVariable) {
     issues.push(issue('error', 'missing-answer', 'No final answer variable is configured.'));
+  } else if (!available.has(parsed.answerVariable)) {
+    issues.push(issue('error', 'unknown-answer-variable', `Answer VALUE refers to unknown variable ${parsed.answerVariable}.`));
   }
-  configuredAnswers.forEach(config => {
-    if (!config?.valueVariable) {
-      issues.push(issue('error', 'missing-answer', 'An answer entry is missing its value variable.'));
-    } else if (!available.has(config.valueVariable)) {
-      issues.push(issue('error', 'unknown-answer-variable', `Answer ${config.label || config.valueVariable} refers to unknown variable ${config.valueVariable}.`));
-    }
-  });
 
   parsed.assignments.forEach(assignment => {
     if (!answerDependencies.has(assignment.name)) issues.push(issue(
@@ -209,7 +295,7 @@ function runStaticChecks(parsed, issues) {
     ));
   });
 
-  if ((parsed.answerConfigs || []).length === 1 && !parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
+  if (!parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
     issues.push(issue(
       'warning',
       'implicit-answer',
@@ -223,19 +309,17 @@ function runStaticChecks(parsed, issues) {
     'The final answer does not depend on any randomized or fixed input definition.'
   ));
 
-  (parsed.answerConfigs || [parsed.answerConfig]).forEach(config => {
-    if (!['absolute', 'percentage'].includes(config.toleranceType)) issues.push(issue(
-      'error',
-      'invalid-tolerance-type',
-      `${config.label || config.valueVariable}: TOLERANCE_TYPE must be absolute or percentage.`
-    ));
+  if (!['absolute', 'percentage'].includes(parsed.answerConfig.toleranceType)) issues.push(issue(
+    'error',
+    'invalid-tolerance-type',
+    'TOLERANCE_TYPE must be absolute or percentage.'
+  ));
 
-    if (!['exact', 'numeric', 'symbolic', 'semantic', 'combined'].includes(config.equivalence)) issues.push(issue(
-      'error',
-      'invalid-equivalence',
-      `${config.label || config.valueVariable}: EQUIVALENCE must be exact, numeric, symbolic, semantic, or combined.`
-    ));
-  });
+  if (!['exact', 'numeric', 'symbolic', 'semantic', 'combined'].includes(parsed.answerConfig.equivalence)) issues.push(issue(
+    'error',
+    'invalid-equivalence',
+    'EQUIVALENCE must be exact, numeric, symbolic, semantic, or combined.'
+  ));
 }
 
 function runTrialChecks(parsed, runs, issues) {
@@ -256,12 +340,14 @@ function runTrialChecks(parsed, runs, issues) {
       uniqueQuestions.add(instance.question);
       if (samples.length < 3) samples.push(instance);
 
-      if (instance.answer < 0) issues.push(issue('warning', 'negative-answer', 'At least one randomized test produced a negative answer.'));
-      if (Math.abs(instance.answer) > 1e12 || String(instance.answer).length > 20) issues.push(issue(
-        'warning',
-        'large-answer',
-        'At least one randomized test produced a very large or lengthy answer. Consider rounding or narrower ranges.'
-      ));
+      if (typeof instance.answer === 'number' && Number.isFinite(instance.answer)) {
+        if (instance.answer < 0) issues.push(issue('warning', 'negative-answer', 'At least one randomized test produced a negative answer.'));
+        if (Math.abs(instance.answer) > 1e12 || String(instance.answer).length > 20) issues.push(issue(
+          'warning',
+          'large-answer',
+          'At least one randomized test produced a very large or lengthy answer. Consider rounding or narrower ranges.'
+        ));
+      }
     } catch (error) {
       failures += 1;
       const message = String(error.message || error);

@@ -16,6 +16,21 @@
   <link rel="stylesheet" href="assets/css/responsive.css" />
   <script src="https://cdn.jsdelivr.net/npm/mathjs@13.2.0/lib/browser/math.min.js"></script>
   <script type="module" src="assets/js/app.js"></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', function () {
+      window.setTimeout(function () {
+        if (document.documentElement.dataset.studyForgeReady === 'true' || document.getElementById('startupFailure')) return;
+        var panel = document.createElement('div');
+        panel.id = 'startupFailure';
+        panel.setAttribute('role', 'alert');
+        panel.style.cssText = 'position:fixed;inset:auto 16px 16px 16px;z-index:99999;padding:14px 16px;border-radius:12px;background:#7f1d1d;color:#fff;font:14px/1.45 system-ui,sans-serif;box-shadow:0 12px 36px rgba(0,0,0,.28)';
+        panel.textContent = location.protocol === 'file:'
+          ? 'Study Forge uses JavaScript modules and cannot run by double-clicking index.html. Start it with serve-study-forge.bat, serve-study-forge.sh, or a local web server.'
+          : 'Study Forge did not finish starting. Check the browser console and verify that assets/js/app.js and its module files are being served.';
+        document.body.appendChild(panel);
+      }, 1200);
+    });
+  </script>
 </head>
 <body>
   <div class="app-shell">
@@ -71,7 +86,7 @@
             <div class="hero-copy">
               <span class="section-kicker">Focused learning workspace</span>
               <h2>Turn any topic into a clear path to mastery.</h2>
-              <p>Bring a topic, TXT file, or PDF. Generate one useful learning item at a time, then refine, practise, and assemble your best exercises into a quiz.</p>
+              <p>Bring a topic, TXT file, or PDF. Generate one useful learning item at a time, then refine, practise, and use saved templates to assemble randomized quizzes.</p>
               <div class="hero-actions"><button class="button primary" data-view-jump="source">Add study material</button><button class="button secondary" data-view-jump="exercise">Open exercise lab</button></div>
             </div>
             <div class="hero-visual" aria-hidden="true">
@@ -95,7 +110,7 @@
               <div class="quick-actions">
                 <button class="quick-action" data-view-jump="summary"><span class="quick-icon lavender">≡</span><span><strong>Create a summary</strong><small>Compress a topic or source into structured notes.</small></span><b>→</b></button>
                 <button class="quick-action" data-view-jump="exercise"><span class="quick-icon mint">✦</span><span><strong>Generate an exercise</strong><small>Use Gemini, a direct prompt, or a reusable template.</small></span><b>→</b></button>
-                <button class="quick-action" data-view-jump="quiz"><span class="quick-icon coral">✓</span><span><strong>Build a quiz</strong><small>Collect generated exercises and control feedback timing.</small></span><b>→</b></button>
+                <button class="quick-action" data-view-jump="quiz"><span class="quick-icon coral">✓</span><span><strong>Build a quiz</strong><small>Select saved templates, generate fresh problem instances, and control feedback timing.</small></span><b>→</b></button>
               </div>
             </article>
             <article class="panel recent-panel">
@@ -175,8 +190,8 @@
                 <label class="field-label" for="templateName">Template name</label><input class="input" id="templateName" placeholder="Asynchronous serial transmission" />
                 <label class="field-label" for="templateText">Template text</label><textarea class="textarea code-editor" id="templateText" spellcheck="false" placeholder="Question with {PLACEHOLDERS}…"></textarea>
                 <div class="template-help"><details><summary>Complete template syntax reference</summary><div class="template-reference">
-                  <p>The text before the first section is the learner-facing question. Insert generated values with <code>{VARIABLE}</code>. Only <strong>Definitions</strong> and <strong>Formula</strong> are required.</p>
-                  <div class="syntax-section"><h4>Supported sections</h4><code>## Metadata</code><code>## Definitions</code><code>## Mappings</code><code>## Formula</code><code>## Constraints</code><code>## Answer</code><code>## Answers</code><code>## Choices</code><code>## Feedback</code></div>
+                  <p>The text before the first section is the learner-facing question. Insert generated values with <code>{VARIABLE}</code>. Mathematical templates use <strong>Definitions</strong> and <strong>Formula</strong>; fixed semantic templates may use only <strong>Metadata</strong> and <strong>Semantic Answer</strong>.</p>
+                  <div class="syntax-section"><h4>Supported sections</h4><code>## Metadata</code><code>## Definitions</code><code>## Mappings</code><code>## Formula</code><code>## Constraints</code><code>## Answer</code><code>## Answers</code><code>## Semantic Answer</code><code>## Choices</code><code>## Feedback</code></div>
                   <div class="syntax-section"><h4>Metadata terms</h4><code>TITLE:</code><code>SUBJECT:</code><code>TOPIC:</code><code>TYPE:</code><code>DIFFICULTY:</code><code>SEED:</code><code>TAGS:</code><code>LANGUAGE:</code><code>MAX_CONSTRAINT_ATTEMPTS:</code><p><code>SEED</code> accepts <code>random</code> or an integer from 0 to 4294967295.</p></div>
                   <div class="syntax-grid">
                     <div><code>VALUE: description (600)</code><span>Fixed integer, decimal, or text</span></div>
@@ -186,16 +201,15 @@
                     <div><code>MAPPED_VALUE: SOURCE_VALUE</code><span>Mapping header followed by key=value lines</span></div>
                     <div><code>FRAME_BITS = 1 + DATA_BITS + PARITY_BITS + STOP</code><span>Dependent formula variable</span></div>
                     <div><code>ANSWER = ...</code><span>Conventional final answer variable</span></div>
-                    <div><code>## Answers</code><span>Optional list of several answer variables for partial grading</span></div>
                     <div><code>DATA_BITS &gt; 0</code><span>Constraint; supports ==, !=, &lt;, &lt;=, &gt;, &gt;=, AND, OR, NOT</span></div>
                   </div>
-                  <div class="syntax-section"><h4>Answer terms</h4><code>VALUE:</code><code>UNIT:</code><code>ROUND:</code><code>TOLERANCE:</code><code>TOLERANCE_TYPE:</code><code>EQUIVALENCE:</code><code>ACCEPT:</code><p>Tolerance types: <code>absolute</code>, <code>percentage</code>. Equivalence: <code>exact</code>, <code>numeric</code>, <code>symbolic</code>, <code>semantic</code>, <code>combined</code>.</p></div>
-                  <div class="syntax-section"><h4>Choices terms</h4><code>CORRECT:</code><code>DISTRACTOR:</code><code>SHUFFLE:</code><p>The section name and terms are reserved for multiple-choice template expansion. Current template generation remains single-answer.</p></div>
+                  <div class="syntax-section"><h4>Answer terms</h4><code>VALUE:</code><code>LABEL:</code><code>TYPE:</code><code>UNIT:</code><code>ROUND:</code><code>TOLERANCE:</code><code>TOLERANCE_TYPE:</code><code>EQUIVALENCE:</code><code>ACCEPT:</code><p>Use <code>## Answers</code> with one variable block per answer when a problem requires multiple results.</p></div><div class="syntax-section"><h4>Semantic Answer terms</h4><code>REFERENCE:</code><code>STRICTNESS:</code><code>ESSENTIAL_CONCEPTS:</code><code>SUPPORTING_CONCEPTS:</code><code>ACCEPTED_EXPRESSIONS:</code><code>KNOWN_INCORRECT_CLAIMS:</code><p>Semantic templates can be instantiated without numeric validation. Gemini is required only for grading the learner response.</p></div>
+                  <div class="syntax-section"><h4>Choices terms</h4><code>CORRECT:</code><code>DISTRACTOR:</code><code>SHUFFLE:</code><p>The section name and terms are reserved for multiple-choice template expansion. Deterministic templates currently generate single-answer or multi-answer free-response instances.</p></div>
                   <div class="syntax-section"><h4>Feedback terms</h4><code>HINT:</code><code>SOLUTION:</code><code>EXPLANATION:</code><p>Feedback text may include generated or calculated placeholders such as <code>{FRAME_BITS}</code>.</p></div>
                   <div class="syntax-section"><h4>Formula support</h4><p>Operators: <code>+ - * / % ^ ( )</code>. Constants: <code>PI</code>, <code>E</code>. Functions: <code>abs</code>, <code>round</code>, <code>floor</code>, <code>ceil</code>, <code>min</code>, <code>max</code>, <code>sqrt</code>, <code>pow</code>.</p></div>
                 </div></details></div>
                 <div class="template-validation-tools">
-                  <label class="compact-field" for="templateValidationRuns"><span>Randomized tests</span><select class="select compact-select" id="templateValidationRuns"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label>
+                  <label class="compact-field" for="templateValidationRuns"><span>Mathematical randomized tests</span><select class="select compact-select" id="templateValidationRuns"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label>
                   <button class="button secondary" id="validateTemplateButton">Validate template</button>
                 </div>
                 <div class="template-validation-result hidden" id="templateValidationResult" aria-live="polite"></div>
@@ -237,9 +251,9 @@
         </section>
 
         <section class="view" id="view-quiz" data-title="Quiz builder" data-eyebrow="Validate">
-          <div class="page-intro"><div><span class="section-kicker">Randomized assessment</span><h2>Build a multi-problem quiz</h2><p>Add as many problem slots as needed. For every slot, choose one or more saved exercises; one candidate is selected randomly whenever the quiz starts.</p></div><div class="button-row"><button class="button secondary" id="addQuizProblemButton">Add problem</button><button class="button primary" id="startQuizButton">Start quiz</button></div></div>
+          <div class="page-intro"><div><span class="section-kicker">Randomized assessment</span><h2>Build a multi-problem quiz</h2><p>Add as many problem slots as needed. For every slot, choose one or more saved templates; one template is selected and instantiated with fresh allowed values whenever the quiz starts.</p></div><div class="button-row"><button class="button secondary" id="addQuizProblemButton">Add problem</button><button class="button primary" id="startQuizButton">Start quiz</button></div></div>
           <div class="quiz-layout">
-            <article class="panel quiz-list-panel"><div class="panel-heading"><div><h3>Quiz problems</h3><p><span id="quizItemCount">0</span> problem slots in the current quiz</p></div><button class="text-button danger-text" id="clearQuizButton">Clear all</button></div><div id="quizBuilderList" class="empty-state"><span>✓</span><strong>Your quiz has no problems</strong><p>Save exercises to the library, then add a problem and select its candidate pool.</p></div></article>
+            <article class="panel quiz-list-panel"><div class="panel-heading"><div><h3>Quiz problems</h3><p><span id="quizItemCount">0</span> problem slots in the current quiz</p></div><button class="text-button danger-text" id="clearQuizButton">Clear all</button></div><div id="quizBuilderList" class="empty-state"><span>✓</span><strong>Your quiz has no problems</strong><p>Save templates in Exercise Lab, then add a problem and select its template candidate pool.</p></div></article>
             <aside class="panel controls-panel">
               <h3>Quiz settings</h3>
               <label class="field-label" for="quizTitle">Quiz title</label><input class="input" id="quizTitle" value="Practice session" />

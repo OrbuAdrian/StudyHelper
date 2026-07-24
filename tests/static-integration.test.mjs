@@ -36,4 +36,11 @@ assert.match(app, /buildSemanticEvaluationPrompt/);
 assert.match(app, /buildConceptExtractionPrompt/);
 assert.match(app, /score:\s*correct[\s\S]*graded,[\s\S]*ungradable/);
 
+
+assert.match(app, /candidateTemplateIds/);
+assert.match(app, /instantiateTemplate/);
+assert.match(app, /Numeric randomized validation is not required/);
+assert.doesNotMatch(app, /data-action=\"quiz\"/);
+assert.match(html, /choose one or more saved templates/);
+assert.match(html, /## Semantic Answer/);
 console.log('Static integration tests passed.');

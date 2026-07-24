@@ -7,24 +7,38 @@ const ALLOWED_FUNCTIONS = [
   'abs', 'round', 'floor', 'ceil', 'min', 'max', 'sqrt', 'pow'
 ];
 const CONSTANTS = { PI: Math.PI, E: Math.E };
+const SEMANTIC_TYPES = new Set([
+  'semantic', 'semantic-answer', 'semantic-explanation', 'definition',
+  'comparison', 'reasoning', 'phrase-completion', 'valid-statement', 'stated-answer'
+]);
 const KNOWN_SECTIONS = new Set([
   'metadata', 'definitions', 'mappings', 'formula', 'constraints',
-  'answer', 'answers', 'choices', 'feedback'
+  'answer', 'answers', 'semantic-answer', 'choices', 'feedback'
 ]);
 
 export function parseTemplate(templateText) {
   const sections = splitTemplateSections(templateText);
   const metadata = parseKeyValueSection(sections.metadata);
-  const definitions = parseDefinitions(sections.definitions);
+  const semanticAnswer = parseSemanticAnswerSection(sections['semantic-answer']);
+  const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
+  const definitions = parseDefinitions(sections.definitions, { optional: semantic });
   const explicitMappings = parseMappingsSection(sections.mappings);
-  const formula = parseFormulaSection(sections.formula);
+  const formula = parseFormulaSection(sections.formula, { optional: semantic });
   const mappings = mergeMappings(explicitMappings, formula.mappings);
   const constraints = parseConstraints(sections.constraints);
-  const answerConfig = parseAnswerSection(sections.answer, formula.assignments);
-  const answerConfigs = parseAnswersSection(sections.answers, answerConfig);
+  const answerConfig = semantic
+    ? createSemanticAnswerConfig(semanticAnswer)
+    : parseAnswerSection(sections.answer, formula.assignments);
+  const answerConfigs = semantic
+    ? [answerConfig]
+    : parseAnswersSection(sections.answers, answerConfig);
   const feedback = parseFeedbackSection(sections.feedback);
   const choices = parseKeyValueSection(sections.choices, { allowRepeated: true });
   const seedSpec = parseSeedSpec(metadata.SEED);
+
+  if (semantic && !semanticAnswer.REFERENCE) {
+    throw new Error('Semantic templates need ## Semantic Answer with REFERENCE: text.');
+  }
 
   return {
     sections,
@@ -38,11 +52,18 @@ export function parseTemplate(templateText) {
     constraints,
     answerConfig,
     answerConfigs,
+    semanticAnswer,
+    semantic,
     feedback,
     choices,
     seedSpec,
     answerVariable: answerConfig.valueVariable
   };
+}
+
+export function isSemanticTemplate(templateOrParsed) {
+  const parsed = typeof templateOrParsed === 'string' ? parseTemplate(templateOrParsed) : templateOrParsed;
+  return Boolean(parsed?.semantic);
 }
 
 export function instantiateTemplate(templateText, options = {}) {
@@ -84,9 +105,20 @@ export function instantiateParsedTemplate(parsed, options = {}) {
     lastConstraintTrace = constraintTrace;
     if (lateConstraintTrace.some(item => !item.passed)) continue;
 
+    if (parsed.semantic) {
+      return buildSemanticTemplateInstance({
+        parsed,
+        variables,
+        mappingTrace,
+        assignmentTrace,
+        constraintTrace,
+        seed,
+        attempt
+      });
+    }
+
     const answers = resolveConfiguredAnswers(parsed.answerConfigs, variables);
     const primaryAnswer = answers[0];
-    const answer = primaryAnswer.answer;
     const dependencies = resolveAnswerDependencies(parsed);
     const requiredInputs = new Set(
       parsed.definitions
@@ -99,9 +131,6 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       requiredInputs
     );
     const question = questionSegments.map(segment => segment.text).join('');
-    const answerUnit = primaryAnswer.answerUnit;
-    const formattedAnswer = primaryAnswer.formattedAnswer;
-    const acceptedAnswers = primaryAnswer.acceptedAnswers;
     const inputTrace = parsed.definitions.map(definition => ({
       name: definition.name,
       value: variables[definition.name],
@@ -126,29 +155,26 @@ export function instantiateParsedTemplate(parsed, options = {}) {
         required: dependencies.has(step.name)
       })),
       constraints: constraintTrace,
-      answerVariable: parsed.answerVariable,
+      answerVariable: primaryAnswer.valueVariable,
       answerVariables: answers.map(item => item.valueVariable),
       answerDetails: answers,
-      answer,
-      formattedAnswer,
-      answerUnit
+      answer: primaryAnswer.answer,
+      formattedAnswer: primaryAnswer.formattedAnswer,
+      answerUnit: primaryAnswer.answerUnit
     };
 
-    const feedback = {
-      hint: renderTemplateText(parsed.feedback.HINT || '', variables),
-      solution: renderTemplateText(parsed.feedback.SOLUTION || '', variables),
-      explanation: renderTemplateText(parsed.feedback.EXPLANATION || '', variables)
-    };
+    const feedback = renderFeedback(parsed.feedback, variables);
 
     return {
+      kind: 'deterministic',
       question,
       questionSegments,
-      answer,
-      formattedAnswer,
-      answerUnit,
-      acceptedAnswers,
+      answer: primaryAnswer.answer,
+      formattedAnswer: primaryAnswer.formattedAnswer,
+      answerUnit: primaryAnswer.answerUnit,
+      acceptedAnswers: primaryAnswer.acceptedAnswers,
       answers,
-      answerConfig: { ...parsed.answerConfig },
+      answerConfig: { ...primaryAnswer.answerConfig },
       answerConfigs: parsed.answerConfigs.map(config => ({ ...config })),
       variables,
       requiredInputs: [...requiredInputs],
@@ -185,10 +211,15 @@ export function resolveAnswerDependencies(parsed) {
     (graph.get(name) || []).forEach(visit);
   };
 
-  (parsed.answerConfigs?.length ? parsed.answerConfigs : [parsed.answerConfig])
-    .map(config => config?.valueVariable)
-    .filter(Boolean)
-    .forEach(visit);
+  if (parsed.semantic) {
+    extractPlaceholders(parsed.semanticAnswer?.REFERENCE || '').forEach(visit);
+    extractPlaceholders(parsed.sections.question || '').forEach(visit);
+  } else {
+    (parsed.answerConfigs?.length ? parsed.answerConfigs : [parsed.answerConfig])
+      .map(config => config?.valueVariable)
+      .filter(Boolean)
+      .forEach(visit);
+  }
   return collected;
 }
 
@@ -250,9 +281,13 @@ export function formatTraceAsText(trace) {
     trace.constraints.forEach(item => lines.push(`${item.passed ? 'PASS' : 'FAIL'}: ${item.expression}`));
   }
 
-  if (trace.answerDetails?.length > 1) {
+  if (trace.semantic) {
+    lines.push('', `Reference answer: ${trace.referenceAnswer || ''}`);
+  } else if (trace.answerDetails?.length > 1) {
     lines.push('', 'Final answers:');
-    trace.answerDetails.forEach(item => lines.push(`${item.label || item.valueVariable}: ${item.formattedAnswer || formatAnswer(item.answer)}`));
+    trace.answerDetails.forEach(item => {
+      lines.push(`${item.label || item.valueVariable}: ${item.formattedAnswer || formatAnswer(item.answer)}`);
+    });
   } else {
     lines.push('', `Final answer: ${trace.formattedAnswer || formatAnswer(trace.answer)}`);
   }
@@ -273,7 +308,7 @@ export function createSeededRandom(seed) {
 function splitTemplateSections(text) {
   const source = String(text || '').replace(/\r\n?/g, '\n');
   const matches = [...source.matchAll(/^##\s*([^\n]+?)\s*$/gm)];
-  if (!matches.length) throw new Error('Add at least ## Definitions and ## Formula sections.');
+  if (!matches.length) throw new Error('Add at least one template section.');
 
   const question = source.slice(0, matches[0].index).trim();
   if (!question) throw new Error('The exercise question is empty.');
@@ -287,8 +322,12 @@ function splitTemplateSections(text) {
     sections[name] = source.slice(start, end).trim();
   });
 
-  if (!sections.definitions) throw new Error('The template needs a ## Definitions section.');
-  if (!sections.formula) throw new Error('The template needs a ## Formula section.');
+  const metadata = parseKeyValueSection(sections.metadata);
+  const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
+  if (!semantic) {
+    if (!sections.definitions) throw new Error('The template needs a ## Definitions section.');
+    if (!sections.formula) throw new Error('The template needs a ## Formula section.');
+  }
   return sections;
 }
 
@@ -315,9 +354,12 @@ function parseKeyValueSection(text, options = {}) {
   return result;
 }
 
-function parseDefinitions(text) {
+function parseDefinitions(text, options = {}) {
   const lines = cleanLines(text);
-  if (!lines.length) throw new Error('The Definitions section is empty.');
+  if (!lines.length) {
+    if (options.optional) return [];
+    throw new Error('The Definitions section is empty.');
+  }
   const seen = new Set();
 
   return lines.map(line => {
@@ -399,13 +441,16 @@ function parseMappingsSection(text) {
   return mappings;
 }
 
-function parseFormulaSection(text) {
+function parseFormulaSection(text, options = {}) {
   const mappings = [];
   const assignments = [];
   const mappingNames = new Set();
   const assignmentNames = new Set();
   const lines = cleanLines(text);
-  if (!lines.length) throw new Error('The Formula section is empty.');
+  if (!lines.length) {
+    if (options.optional) return { mappings, assignments };
+    throw new Error('The Formula section is empty.');
+  }
 
   for (const line of lines) {
     const mappingMatch = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.+)$/);
@@ -423,7 +468,7 @@ function parseFormulaSection(text) {
     assignments.push({ name: assignmentMatch[1], expression: assignmentMatch[2].trim() });
   }
 
-  if (!assignments.length) throw new Error('The Formula section needs at least one assignment, preferably ANSWER = ...');
+  if (!assignments.length && !options.optional) throw new Error('The Formula section needs at least one assignment, preferably ANSWER = ...');
   return { mappings, assignments };
 }
 
@@ -477,6 +522,8 @@ function parseAnswerSection(text, assignments) {
   if (tolerance !== null && (!(tolerance >= 0) || !Number.isFinite(tolerance))) throw new Error('Answer TOLERANCE must be a non-negative number.');
   return {
     valueVariable: (values.VALUE || fallback || '').trim(),
+    label: (values.LABEL || values.VALUE || fallback || 'Answer').trim(),
+    type: (values.TYPE || 'numeric').trim().toLowerCase(),
     unit: (values.UNIT || '').trim(),
     round,
     tolerance,
@@ -486,71 +533,123 @@ function parseAnswerSection(text, assignments) {
   };
 }
 
-
 function parseAnswersSection(text, fallbackConfig) {
-  if (!text) return [fallbackConfig];
-  const lines = cleanLines(text);
-  if (!lines.length) return [fallbackConfig];
+  if (!String(text || '').trim()) return [fallbackConfig];
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
   const configs = [];
   let current = null;
 
   const commit = () => {
     if (!current) return;
-    configs.push(buildAnswerConfig(current.values, current.valueVariable, current.label, fallbackConfig));
+    configs.push(normalizeAnswerConfig(current.values, current.valueVariable, fallbackConfig));
     current = null;
   };
 
-  for (const line of lines) {
-    if (/^[A-Z][A-Z0-9_]*$/.test(line)) {
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//')) continue;
+    const header = line.match(/^([A-Z][A-Z0-9_]*)\s*:?\s*$/);
+    if (header) {
       commit();
-      current = { valueVariable: line, label: '', values: {} };
+      current = { valueVariable: header[1], values: {} };
       continue;
     }
-
-    const header = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/);
-    if (!header) throw new Error(`Invalid Answers entry: “${line}”. Use VARIABLE or VARIABLE: followed by answer terms.`);
-    const key = header[1].toUpperCase();
-    const value = header[2].trim();
-
-    if (current && ['LABEL', 'UNIT', 'ROUND', 'TOLERANCE', 'TOLERANCE_TYPE', 'EQUIVALENCE', 'ACCEPT', 'TYPE'].includes(key)) {
-      current.values[key] = value;
-      continue;
+    const setting = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
+    if (!setting || !current) {
+      throw new Error(`Invalid Answers entry: “${line}”. Start each answer with VARIABLE_NAME:`);
     }
-
-    commit();
-    current = { valueVariable: key, label: value, values: {} };
+    current.values[setting[1].toUpperCase()] = setting[2].trim();
   }
   commit();
-
-  if (!configs.length) throw new Error('The Answers section needs at least one answer variable.');
-  const seen = new Set();
-  configs.forEach(config => {
-    if (seen.has(config.valueVariable)) throw new Error(`Duplicate answer variable in ## Answers: ${config.valueVariable}.`);
-    seen.add(config.valueVariable);
-  });
+  if (!configs.length) throw new Error('The Answers section is empty.');
   return configs;
 }
 
-function buildAnswerConfig(values, valueVariable, label, fallbackConfig = {}) {
+function normalizeAnswerConfig(values, valueVariable, fallback = {}) {
   const round = values.ROUND === undefined || values.ROUND === ''
-    ? fallbackConfig.round ?? null
+    ? (fallback.round ?? null)
     : Number(values.ROUND);
   const tolerance = values.TOLERANCE === undefined || values.TOLERANCE === ''
-    ? fallbackConfig.tolerance ?? null
+    ? (fallback.tolerance ?? null)
     : Number(values.TOLERANCE);
-  if (round !== null && (!Number.isInteger(round) || round < 0 || round > 15)) throw new Error('Answer ROUND must be an integer from 0 to 15.');
-  if (tolerance !== null && (!(tolerance >= 0) || !Number.isFinite(tolerance))) throw new Error('Answer TOLERANCE must be a non-negative number.');
+  if (round !== null && (!Number.isInteger(round) || round < 0 || round > 15)) {
+    throw new Error('Answer ROUND must be an integer from 0 to 15.');
+  }
+  if (tolerance !== null && (!(tolerance >= 0) || !Number.isFinite(tolerance))) {
+    throw new Error('Answer TOLERANCE must be a non-negative number.');
+  }
   return {
-    valueVariable: String(valueVariable || fallbackConfig.valueVariable || '').trim(),
-    label: String(values.LABEL || label || valueVariable || fallbackConfig.valueVariable || '').trim(),
-    type: String(values.TYPE || 'numeric').trim().toLowerCase(),
-    unit: (values.UNIT === undefined ? fallbackConfig.unit : values.UNIT || '').trim(),
+    valueVariable: String(valueVariable || values.VALUE || fallback.valueVariable || '').trim(),
+    label: String(values.LABEL || valueVariable || fallback.label || '').trim(),
+    type: String(values.TYPE || fallback.type || 'numeric').trim().toLowerCase(),
+    unit: String(values.UNIT ?? fallback.unit ?? '').trim(),
     round,
     tolerance,
-    toleranceType: (values.TOLERANCE_TYPE || fallbackConfig.toleranceType || 'absolute').trim().toLowerCase(),
-    equivalence: (values.EQUIVALENCE || fallbackConfig.equivalence || 'numeric').trim().toLowerCase(),
-    acceptedAnswers: splitCommaValues(values.ACCEPT || '').filter(Boolean)
+    toleranceType: String(values.TOLERANCE_TYPE || fallback.toleranceType || 'absolute').trim().toLowerCase(),
+    equivalence: String(values.EQUIVALENCE || fallback.equivalence || 'numeric').trim().toLowerCase(),
+    acceptedAnswers: splitCommaValues(values.ACCEPT ?? '').length
+      ? splitCommaValues(values.ACCEPT).filter(Boolean)
+      : [...(fallback.acceptedAnswers || [])]
   };
+}
+
+function parseSemanticAnswerSection(text) {
+  if (!String(text || '').trim()) return {};
+  const supported = new Set([
+    'REFERENCE', 'STRICTNESS', 'ESSENTIAL_CONCEPTS', 'SUPPORTING_CONCEPTS',
+    'ACCEPTED_EXPRESSIONS', 'KNOWN_INCORRECT_CLAIMS'
+  ]);
+  const result = {};
+  let currentKey = null;
+  for (const rawLine of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//')) continue;
+    const match = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
+    if (match && supported.has(match[1].toUpperCase())) {
+      currentKey = match[1].toUpperCase();
+      result[currentKey] = match[2].trim() === '|' ? '' : match[2].trim();
+      continue;
+    }
+    if (!currentKey) throw new Error(`Invalid Semantic Answer entry: “${line}”.`);
+    result[currentKey] = [result[currentKey], line].filter(Boolean).join(' ');
+  }
+  return result;
+}
+
+function createSemanticAnswerConfig(values = {}) {
+  return {
+    valueVariable: '',
+    label: 'Reference answer',
+    type: 'semantic',
+    unit: '',
+    round: null,
+    tolerance: null,
+    toleranceType: 'absolute',
+    equivalence: 'semantic',
+    acceptedAnswers: [],
+    referenceAnswer: String(values.REFERENCE || '').trim(),
+    strictness: normalizeStrictnessValue(values.STRICTNESS),
+    essentialConcepts: parseSemanticList(values.ESSENTIAL_CONCEPTS),
+    supportingConcepts: parseSemanticList(values.SUPPORTING_CONCEPTS),
+    acceptedExpressions: parseSemanticList(values.ACCEPTED_EXPRESSIONS),
+    knownIncorrectClaims: parseSemanticList(values.KNOWN_INCORRECT_CLAIMS)
+  };
+}
+
+function parseSemanticList(value) {
+  if (!String(value || '').trim()) return [];
+  return String(value).split(/\s*;\s*|\s*\|\s*/).map(item => item.trim()).filter(Boolean);
+}
+
+function normalizeStrictnessValue(value) {
+  const normalized = String(value || 'moderate').trim().toLowerCase();
+  return ['lenient', 'moderate', 'strict', 'exacting'].includes(normalized)
+    ? normalized
+    : 'moderate';
+}
+
+function isSemanticTemplateMetadata(metadata = {}) {
+  return SEMANTIC_TYPES.has(String(metadata.TYPE || '').trim().toLowerCase());
 }
 
 function parseFeedbackSection(text) {
@@ -653,33 +752,109 @@ function evaluateConstraints(constraints, variables) {
   });
 }
 
-
 function resolveConfiguredAnswers(configs, variables) {
-  return (configs || []).map(config => {
-    const answer = resolveAnswer(config.valueVariable, variables);
+  return (configs || []).map((config, index) => {
+    const valueVariable = config.valueVariable;
+    if (!valueVariable) throw new Error('No answer variable is configured. Add ANSWER = ... or configure ## Answer / ## Answers.');
+    if (!(valueVariable in variables)) throw new Error(`Answer variable ${valueVariable} was not calculated.`);
+    const answer = variables[valueVariable];
+    if (typeof answer !== 'number' || !Number.isFinite(answer)) {
+      throw new Error(`Answer variable ${valueVariable} is not a finite number.`);
+    }
     const answerUnit = resolveTextValue(config.unit, variables);
-    const formattedAnswer = formatConfiguredAnswer(answer, config, answerUnit);
-    const acceptedAnswers = config.acceptedAnswers.map(value => renderTemplateText(value, variables));
     return {
-      id: config.valueVariable,
-      valueVariable: config.valueVariable,
-      label: config.label || config.valueVariable,
+      id: valueVariable,
+      valueVariable,
+      label: config.label || `Answer ${index + 1}`,
       answer,
-      rawAnswer: answer,
-      formattedAnswer,
       answerUnit,
-      acceptedAnswers,
+      formattedAnswer: formatConfiguredAnswer(answer, config, answerUnit),
+      acceptedAnswers: (config.acceptedAnswers || []).map(value => renderTemplateText(value, variables)),
       answerConfig: { ...config }
     };
   });
 }
 
-function resolveAnswer(answerVariable, variables) {
-  if (!answerVariable) throw new Error('No answer variable is configured. Add ANSWER = ... or ## Answer with VALUE: VARIABLE.');
-  if (!(answerVariable in variables)) throw new Error(`Answer variable ${answerVariable} was not calculated.`);
-  const answer = variables[answerVariable];
-  if (typeof answer !== 'number' || !Number.isFinite(answer)) throw new Error(`Answer variable ${answerVariable} is not a finite number.`);
-  return answer;
+function buildSemanticTemplateInstance({
+  parsed,
+  variables,
+  mappingTrace,
+  assignmentTrace,
+  constraintTrace,
+  seed,
+  attempt
+}) {
+  const requiredNames = new Set(extractPlaceholders(parsed.sections.question));
+  const questionSegments = renderQuestionSegments(parsed.sections.question, variables, requiredNames);
+  const question = questionSegments.map(segment => segment.text).join('');
+  const referenceAnswer = renderTemplateText(parsed.semanticAnswer.REFERENCE, variables).trim();
+  if (!referenceAnswer) throw new Error('The semantic reference answer is empty after template generation.');
+  const feedback = renderFeedback(parsed.feedback, variables);
+  const semanticConfig = {
+    strictness: normalizeStrictnessValue(parsed.semanticAnswer.STRICTNESS),
+    referenceAnswer,
+    essentialConcepts: parseSemanticList(renderTemplateText(parsed.semanticAnswer.ESSENTIAL_CONCEPTS || '', variables)),
+    supportingConcepts: parseSemanticList(renderTemplateText(parsed.semanticAnswer.SUPPORTING_CONCEPTS || '', variables)),
+    acceptedExpressions: parseSemanticList(renderTemplateText(parsed.semanticAnswer.ACCEPTED_EXPRESSIONS || '', variables)),
+    knownIncorrectClaims: parseSemanticList(renderTemplateText(parsed.semanticAnswer.KNOWN_INCORRECT_CLAIMS || '', variables)),
+    conceptSource: 'manual'
+  };
+  const inputs = parsed.definitions.map(definition => ({
+    name: definition.name,
+    value: variables[definition.name],
+    description: definition.description,
+    specification: definition.spec,
+    required: requiredNames.has(definition.name)
+  }));
+  const trace = {
+    semantic: true,
+    seed,
+    attempt,
+    inputs,
+    mappings: mappingTrace.map(mapping => ({
+      ...mapping,
+      outputs: mapping.outputs.map(output => ({
+        ...output,
+        required: requiredNames.has(output.name)
+      }))
+    })),
+    assignments: assignmentTrace.map(step => ({
+      ...step,
+      required: requiredNames.has(step.name)
+    })),
+    constraints: constraintTrace,
+    referenceAnswer
+  };
+  return {
+    kind: 'semantic',
+    validationKind: 'semantic',
+    question,
+    questionSegments,
+    answer: referenceAnswer,
+    formattedAnswer: referenceAnswer,
+    answerUnit: '',
+    acceptedAnswers: [],
+    answers: [],
+    answerConfig: { ...parsed.answerConfig },
+    answerConfigs: [{ ...parsed.answerConfig }],
+    semanticConfig,
+    variables,
+    requiredInputs: [...requiredNames],
+    trace,
+    seed,
+    attempt,
+    metadata: { ...parsed.metadata },
+    feedback,
+    explanation: feedback.solution || feedback.explanation || referenceAnswer
+  };
+}
+
+function renderFeedback(feedback, variables) {
+  return {
+    hint: renderTemplateText(feedback.HINT || '', variables),
+    solution: renderTemplateText(feedback.SOLUTION || '', variables),
+    explanation: renderTemplateText(feedback.EXPLANATION || '', variables)
+  };
 }
 
 function renderQuestionSegments(questionTemplate, variables, requiredInputs) {
@@ -742,7 +917,7 @@ function evaluateSanitizedExpression(expression, variables, allowBoolean) {
       if (!allowBoolean && typeof value !== 'number') {
         throw new Error(`${token} is text. Add a mapping and use its numeric mapped variable in formulas.`);
       }
-      return typeof value === 'string' ? JSON.stringify(value) : String(value);
+      return typeof value === 'string' ? JSON.stringify(value) : `(${String(value)})`;
     }
     return token;
   }).join('');

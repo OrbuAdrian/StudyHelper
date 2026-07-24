@@ -14,6 +14,7 @@ export function isSemanticExercise(exercise) {
     && (exercise.validationKind === 'semantic'
       || exercise.type === 'semantic'
       || exercise.type === 'valid-statement'
+      || exercise.type === 'stated-answer'
       || exercise.answerConfig?.equivalence === 'semantic')
   );
 }
