@@ -2,6 +2,41 @@ export const STORAGE_KEY = 'studyForgeStateV1';
 export const SESSION_KEY = 'studyForgeSessionApiKey';
 export const SOURCE_LIMIT = 120000;
 
+export const MULTIPLE_CHOICE_TEMPLATE_EXAMPLE = `What is {A} + {B}?
+
+## Metadata
+
+TITLE: Seeded multiple-choice addition
+SUBJECT: Mathematics
+TOPIC: Addition
+TYPE: multiple-choice
+DIFFICULTY: easy
+SEED: random
+LANGUAGE: en
+MAX_CONSTRAINT_ATTEMPTS: 1000
+
+## Definitions
+
+A: first addend (1..20)
+B: second addend (1..20)
+
+## Formula
+
+ANSWER = A + B
+
+## Choices
+
+CORRECT: ANSWER
+DISTRACTOR: ANSWER - 2
+DISTRACTOR: ANSWER + 1
+DISTRACTOR: ANSWER + 3
+SHUFFLE: true
+
+## Feedback
+
+HINT: Add the two highlighted values.
+EXPLANATION: {A} + {B} = {ANSWER}.`;
+
 export const DEFAULT_TEMPLATE = `Calculate the time required in {OUTPUT_UNIT} to transmit {DATA_AMOUNT} KB of data on an asynchronous serial line configured at {BPS} bps, using {DATA_BITS} data bits, {PARITY} parity, and {STOP} stop bit(s).
 
 ## Metadata
@@ -120,7 +155,7 @@ Complete all tasks:
 TITLE: Dynamic matrix sums
 SUBJECT: Mathematics
 TOPIC: Matrices and aggregation
-TYPE: multiple-answer
+TYPE: multiple-tasks
 DIFFICULTY: medium
 SEED: random
 LANGUAGE: en

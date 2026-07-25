@@ -25,7 +25,7 @@ Learner-facing exercise text
 ## Feedback
 ```
 
-A deterministic template needs either `## Definitions` or `## Collections`, plus either `## Formula` or `## Repeated Answers`.
+A single-answer or multiple-tasks deterministic template needs either `## Definitions` or `## Collections`, plus either `## Formula` or `## Repeated Answers`. A multiple-choice template needs `TYPE: multiple-choice` and `## Choices`; definitions and formulas are optional for fixed questions.
 
 A semantic template needs learner-facing text, semantic `TYPE` metadata, and `## Semantic Answer`. Definitions, mappings, collections, formulas, and constraints are optional.
 
@@ -86,7 +86,22 @@ LANGUAGE:
 MAX_CONSTRAINT_ATTEMPTS:
 ```
 
-`SEED` accepts `random` or an integer from `0` to `4294967295`. The same template and seed reproduce all scalar values, collection dimensions, collection items, matrix cells, constraint retries, conditional branches, and answer fields.
+`SEED` accepts `random` or an integer from `0` to `4294967295`. The same template and seed reproduce all scalar values, collection dimensions, collection items, matrix cells, constraint retries, conditional branches, answer fields, and multiple-choice option order.
+
+Recommended `TYPE` values are:
+
+```text
+single-answer
+multiple-tasks
+multiple-choice
+semantic
+definition
+comparison
+reasoning
+phrase-completion
+```
+
+`multiple-tasks` means one exercise contains several separately graded free-response tasks. `multiple-choice` means the learner selects exactly one correct option. The legacy value `multiple-answer` is read only for backward compatibility and is normalized to `multiple-tasks`.
 
 ## Multiline values
 
@@ -344,7 +359,7 @@ ACCEPT:
 
 ## Answers
 
-Use `## Answers` for a fixed number of independently graded results:
+Use `TYPE: multiple-tasks` with `## Answers` for a fixed number of independently graded tasks:
 
 ```text
 ## Answers
@@ -419,7 +434,7 @@ ACCEPT:
 
 `MODE` accepts `items` or `columns`. Matrix rows use `items`.
 
-A template may combine `## Answer`, `## Answers`, and `## Repeated Answers`. The generated exercise is fully correct only when every concrete answer field is correct.
+A `multiple-tasks` template may combine `## Answer`, `## Answers`, and `## Repeated Answers`. The generated exercise is fully correct only when every task answer is correct. Legacy `TYPE: multiple-answer` metadata is accepted during migration and normalized to `TYPE: multiple-tasks`.
 
 ## Semantic Answer
 
@@ -455,18 +470,40 @@ KNOWN_INCORRECT_CLAIMS:
 
 Semantic templates can use collections and dynamic question directives. Their reference answers and feedback can also contain scalar placeholders, loops, conditions, and matrix directives. Gemini is required only when grading a learner answer; without Gemini the attempt is ungradable.
 
-## Choices
+## Multiple-choice exercises
 
-The choices section remains reserved for future template-generated multiple-choice options:
+Use `TYPE: multiple-choice` with `## Choices` when the learner should select one correct option. The section requires exactly one `CORRECT:` entry and at least one `DISTRACTOR:` entry. `SHUFFLE:` accepts `true` or `false` and defaults to `true`.
 
 ```text
-## Choices
+What is {A} + {B}?
 
+## Metadata
+TYPE: multiple-choice
+SEED: random
+
+## Definitions
+A: first addend (1..20)
+B: second addend (1..20)
+
+## Formula
+ANSWER = A + B
+
+## Choices
 CORRECT: ANSWER
-DISTRACTOR: ANSWER / 10
-DISTRACTOR: ANSWER * 10
+DISTRACTOR: ANSWER - 2
+DISTRACTOR: ANSWER + 1
+DISTRACTOR: ANSWER + 3
 SHUFFLE: true
 ```
+
+Choice entries may be:
+
+- a calculated variable such as `ANSWER`;
+- a numeric expression such as `ANSWER + 1`;
+- a number such as `4`;
+- quoted or ordinary text such as `"None of the above"`.
+
+All generated options must be distinct. If randomized values temporarily produce duplicate choices, Study Forge retries generation up to `MAX_CONSTRAINT_ATTEMPTS`. The correct option and the shuffled display order are both reproducible from the exercise seed. Multiple-choice templates do not use `## Answers` or `## Repeated Answers`.
 
 ## Feedback
 
@@ -496,7 +533,7 @@ Rows are numbered from 1 in the answer labels.
 ## Metadata
 
 TITLE: Dynamic matrix sums
-TYPE: multiple-answer
+TYPE: multiple-tasks
 SEED: random
 LANGUAGE: en
 

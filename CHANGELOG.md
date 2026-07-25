@@ -1,5 +1,15 @@
 # Changelog
 
+## Multiple-choice templates and multiple-tasks terminology
+
+- Added working `TYPE: multiple-choice` template support through `## Choices`.
+- Added one `CORRECT:` option, repeated `DISTRACTOR:` options, and seeded `SHUFFLE:` behavior.
+- Added validation for missing, duplicate, or invalid choice expressions.
+- Added a built-in multiple-choice template example.
+- Renamed the learner-facing multi-result model from **multiple-answer** to **multiple-tasks**.
+- Added migration for legacy `multiple-answer` and `multi-answer` saved content.
+- Preserved separate grading for every task in a multiple-tasks exercise.
+
 ## Dynamic Template Format v2
 
 ### Added
@@ -33,8 +43,8 @@
 - Semantic/stated-answer templates using `## Semantic Answer`.
 - Semantic template instantiation in Exercise Lab, including fixed and randomized semantic questions.
 - Structural semantic-template checks that do not require mathematical randomized answer validation.
-- Multi-answer trace and TXT export support.
-- Regression tests for template candidate pools, fresh quiz instantiation, semantic templates, and multiple configured answers.
+- Multiple-tasks trace and TXT export support.
+- Regression tests for template candidate pools, fresh quiz instantiation, semantic templates, and multiple configured task answers.
 
 ### Fixed
 

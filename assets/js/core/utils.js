@@ -22,6 +22,11 @@ export function normalizeText(value) {
 export function humanizeType(type) {
   const labels = {
     multiple_choice: 'Multiple choice',
+    'multiple-choice': 'Multiple choice',
+    multiple_tasks: 'Multiple tasks',
+    'multiple-tasks': 'Multiple tasks',
+    multiple_answer: 'Multiple tasks',
+    'multiple-answer': 'Multiple tasks',
     single_answer: 'Single answer',
     valid_statement: 'Valid statement',
     semantic: 'Semantic answer',

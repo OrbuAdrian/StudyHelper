@@ -1,6 +1,7 @@
 import {
   DEFAULT_TEMPLATE,
   DYNAMIC_TEMPLATE_EXAMPLE,
+  MULTIPLE_CHOICE_TEMPLATE_EXAMPLE,
   SESSION_KEY,
   SOURCE_LIMIT,
   STORAGE_KEY,
@@ -168,7 +169,7 @@ function loadState() {
 function normalizeStoredExercise(exercise) {
   if (!exercise || typeof exercise !== 'object') return exercise;
   const semantic = isSemanticExercise(exercise);
-  const type = exercise.type === 'valid-statement' ? 'semantic' : exercise.type;
+  const type = normalizeExerciseType(exercise.type, exercise.answerItems);
   return {
     ...exercise,
     type,
@@ -183,6 +184,14 @@ function normalizeStoredExercise(exercise) {
         }, exercise.answer)
       : exercise.semanticConfig
   };
+}
+
+function normalizeExerciseType(type, taskItems = []) {
+  const normalized = String(type || '').trim().toLowerCase().replace(/_/g, '-');
+  if (normalized === 'valid-statement') return 'semantic';
+  if (['multiple-answer', 'multi-answer'].includes(normalized)) return 'multiple-tasks';
+  if (Array.isArray(taskItems) && taskItems.length > 1 && normalized !== 'multiple-choice') return 'multiple-tasks';
+  return normalized || 'single-answer';
 }
 
 function saveState() {
@@ -379,6 +388,12 @@ function bindExerciseControls() {
       clearTemplateValidation();
       toast('Dynamic example loaded', 'The example demonstrates generated matrices, repeated lines, a conditional block, collection formulas, multiline feedback, and repeated answer fields.', 'info');
     });
+    els.loadMultipleChoiceTemplateButton.addEventListener('click', () => {
+      els.templateName.value = 'Seeded multiple-choice addition';
+      els.templateText.value = MULTIPLE_CHOICE_TEMPLATE_EXAMPLE;
+      clearTemplateValidation();
+      toast('Multiple-choice example loaded', 'The example demonstrates generated distractors and deterministic seeded option shuffling.', 'info');
+    });
     els.templateText.addEventListener('input', markTemplateValidationStale);
     els.validateTemplateButton.addEventListener('click', () => validateCurrentTemplate());
     els.generateTemplateExerciseButton.addEventListener('click', generateTemplateExercise);
@@ -557,9 +572,23 @@ function normalizeGeneratedExercise(raw, defaults = {}) {
 
 function buildExerciseFromTemplateResult(result, template = {}) {
     const semantic = result.kind === 'semantic' || result.validationKind === 'semantic';
+    const taskItems = !semantic && Array.isArray(result.answers) && result.answers.length > 1
+      ? result.answers.map(item => ({
+        id: item.id,
+        label: item.label,
+        answer: item.formattedAnswer || formatAnswer(item.answer),
+        rawAnswer: item.rawAnswer ?? item.answer,
+        answerUnit: item.answerUnit,
+        answerConfig: item.answerConfig,
+        acceptedAnswers: item.acceptedAnswers || []
+      }))
+      : [];
+    const resolvedType = result.options?.length
+      ? 'multiple-choice'
+      : normalizeExerciseType(result.metadata.TYPE || (semantic ? 'semantic' : 'single-answer'), taskItems);
     return {
       id: uid(),
-      type: result.metadata.TYPE || (semantic ? 'semantic' : 'single-answer'),
+      type: resolvedType,
       difficulty: result.metadata.DIFFICULTY || 'Template-defined',
       language: ['en', 'ro'].includes(String(result.metadata.LANGUAGE || '').toLowerCase())
         ? String(result.metadata.LANGUAGE).toLowerCase()
@@ -567,23 +596,13 @@ function buildExerciseFromTemplateResult(result, template = {}) {
       validationKind: semantic ? 'semantic' : 'deterministic',
       question: result.question,
       questionSegments: result.questionSegments,
-      options: [],
+      options: result.options || [],
       answer: result.formattedAnswer || String(result.answer ?? ''),
       rawAnswer: semantic ? undefined : result.answer,
       answerUnit: result.answerUnit,
       answerConfig: result.answerConfig,
       acceptedAnswers: result.acceptedAnswers || [],
-      answerItems: !semantic && Array.isArray(result.answers) && result.answers.length > 1
-        ? result.answers.map(item => ({
-          id: item.id,
-          label: item.label,
-          answer: item.formattedAnswer || formatAnswer(item.answer),
-          rawAnswer: item.answer,
-          answerUnit: item.answerUnit,
-          answerConfig: item.answerConfig,
-          acceptedAnswers: item.acceptedAnswers || []
-        }))
-        : [],
+      answerItems: taskItems,
       semanticConfig: semantic
         ? normalizeSemanticConfig(result.semanticConfig || {
           strictness: result.answerConfig?.strictness,
@@ -741,7 +760,7 @@ function saveCurrentTemplate() {
           ? lastTemplateValidation.report
           : validateCurrentTemplate({ silent: true });
         if (!report || !report.valid) {
-          return toast('Template not saved', 'Resolve the validator errors before saving this mathematical template.', 'error');
+          return toast('Template not saved', 'Resolve the validator errors before saving this deterministic template.', 'error');
         }
       }
     } catch (error) {
@@ -753,7 +772,7 @@ function saveCurrentTemplate() {
       id: existingIndex >= 0 ? state.templates[existingIndex].id : uid(),
       name,
       text,
-      kind: isSemanticTemplate(parsed) ? 'semantic' : 'deterministic',
+      kind: isSemanticTemplate(parsed) ? 'semantic' : parsed.multipleChoice ? 'multiple-choice' : 'deterministic',
       updatedAt: new Date().toISOString()
     };
     if (existingIndex >= 0) state.templates.splice(existingIndex, 1, item);
@@ -765,7 +784,9 @@ function saveCurrentTemplate() {
       'Template saved',
       isSemanticTemplate(parsed)
         ? `${name} is available for semantic instances and quiz problems.`
-        : `${name} is available for randomized instances and quiz problems.`,
+        : parsed.multipleChoice
+          ? `${name} is available for multiple-choice instances and quiz problems.`
+          : `${name} is available for randomized instances and quiz problems.`,
       'success'
     );
   }
@@ -877,7 +898,7 @@ function splitLines(value) {
   return String(value || '').split(/\r?\n/).map(item => item.trim()).filter(Boolean);
 }
 
-function hasMultipleAnswers(exercise) {
+function hasMultipleTasks(exercise) {
   return Array.isArray(exercise?.answerItems) && exercise.answerItems.length > 1;
 }
 
@@ -885,18 +906,18 @@ function renderAnswerInputs(exercise, { radioName = 'answer', savedAnswer = '' }
   if (exercise.type === 'multiple-choice') {
     return `<div class="option-list">${(exercise.options || []).map(option => `<label class="option-card"><input type="radio" name="${escapeAttr(radioName)}" value="${escapeAttr(option)}" ${savedAnswer === option ? 'checked' : ''}><span>${escapeHtml(option)}</span></label>`).join('')}</div>`;
   }
-  if (hasMultipleAnswers(exercise)) {
+  if (hasMultipleTasks(exercise)) {
     const saved = savedAnswer && typeof savedAnswer === 'object' ? savedAnswer : {};
-    return `<div class="multi-answer-list">${exercise.answerItems.map((item, index) => `<label class="multi-answer-field"><span>${escapeHtml(item.label || `Answer ${index + 1}`)}</span><input class="input" data-role="answer-input" data-answer-id="${escapeAttr(item.id)}" value="${escapeAttr(saved[item.id] || '')}" placeholder="Enter answer${item.answerUnit ? ` in ${escapeAttr(item.answerUnit)}` : ''}"></label>`).join('')}</div>`;
+    return `<div class="multiple-tasks-list">${exercise.answerItems.map((item, index) => `<label class="multiple-task-field"><span>${escapeHtml(item.label || `Task ${index + 1}`)}</span><input class="input" data-role="answer-input" data-answer-id="${escapeAttr(item.id)}" value="${escapeAttr(saved[item.id] || '')}" placeholder="Enter task answer${item.answerUnit ? ` in ${escapeAttr(item.answerUnit)}` : ''}"></label>`).join('')}</div>`;
   }
   return `<textarea class="textarea" data-role="answer-input" placeholder="${isSemanticExercise(exercise) ? 'Write the most valid answer you can…' : 'Enter your answer…'}">${escapeHtml(typeof savedAnswer === 'string' ? savedAnswer : '')}</textarea>`;
 }
 
 function formatAnswerKey(exercise) {
-  if (!hasMultipleAnswers(exercise)) {
+  if (!hasMultipleTasks(exercise)) {
     return `${isSemanticExercise(exercise) ? 'Reference answer' : 'Answer'}: ${exercise.answer}`;
   }
-  return ['Answers:', ...exercise.answerItems.map((item, index) => `${index + 1}. ${item.label || `Answer ${index + 1}`}: ${item.answer}`)].join('\n');
+  return ['Task answers:', ...exercise.answerItems.map((item, index) => `${index + 1}. ${item.label || `Task ${index + 1}`}: ${item.answer}`)].join('\n');
 }
 
 function renderExerciseCard(exercise, host) {
@@ -904,7 +925,7 @@ function renderExerciseCard(exercise, host) {
     const wrapper = document.createElement('div');
     wrapper.className = 'exercise-card';
     const semantic = isSemanticExercise(exercise);
-    const multiAnswer = hasMultipleAnswers(exercise);
+    const multipleTasks = hasMultipleTasks(exercise);
     const optionHtml = renderAnswerInputs(exercise, {
       radioName: `exercise-answer-${exercise.id}`,
       savedAnswer: ''
@@ -930,7 +951,7 @@ function renderExerciseCard(exercise, host) {
     host.appendChild(wrapper);
     wrapper.querySelector('[data-action="check"]').addEventListener('click', () => checkExerciseAnswer(exercise, wrapper));
     wrapper.querySelector('[data-action="hint"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', exercise.hint || 'No hint was supplied for this exercise.'));
-    wrapper.querySelector('[data-action="solution"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', `${multiAnswer ? formatAnswerKey(exercise) : `${semantic ? 'Reference answer' : 'Answer'}: ${exercise.answer}`}${exercise.explanation ? `\n\n${exercise.explanation}` : ''}`));
+    wrapper.querySelector('[data-action="solution"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', `${multipleTasks ? formatAnswerKey(exercise) : `${semantic ? 'Reference answer' : 'Answer'}: ${exercise.answer}`}${exercise.explanation ? `\n\n${exercise.explanation}` : ''}`));
     wrapper.querySelector('[data-action="trace"]')?.addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', exercise.explanation || 'No calculation trace is available.'));
     wrapper.querySelector('[data-action="save"]').addEventListener('click', () => saveExercise(exercise));
     wrapper.querySelector('[data-action="export"]').addEventListener('click', () => downloadJson(`${slugify(exercise.sourceTitle || 'exercise')}.json`, exercise));
@@ -990,11 +1011,14 @@ function renderCalculationTraceHtml(trace) {
     const assignments = (trace.assignments || []).filter(step => step.required).map(step => `<div class="trace-step"><span>${escapeHtml(step.name)}</span><code>${escapeHtml(step.expression)}</code><code>${escapeHtml(step.substitutedExpression)}</code><strong>${escapeHtml(formatAnswer(step.value))}</strong></div>`).join('');
 
     const constraints = (trace.constraints || []).map(item => `<div class="trace-step"><span>${item.passed ? 'PASS' : 'FAIL'}</span><code>${escapeHtml(item.expression)}</code><code>${escapeHtml(item.substitutedExpression || '')}</code><strong>${item.passed ? 'true' : 'false'}</strong></div>`).join('');
+    const choices = trace.choices?.options?.length
+      ? `<section><h5>Generated choices</h5><div class="trace-steps">${trace.choices.options.map((option, index) => `<div class="trace-step"><span>${String.fromCharCode(65 + index)}</span><code>${escapeHtml(option)}</code><strong>${option === trace.choices.correctChoice ? 'correct' : 'distractor'}</strong></div>`).join('')}</div></section>`
+      : '';
     const seedInfo = trace.seed === undefined ? '' : `<div class="trace-seed"><span>Seed <strong>${escapeHtml(trace.seed)}</strong></span><span>Accepted attempt <strong>${escapeHtml(trace.attempt || 1)}</strong></span></div>`;
     const answerDetails = Array.isArray(trace.answerDetails) && trace.answerDetails.length > 1
-      ? `<div class="trace-answer-list">${trace.answerDetails.map((item, index) => `<div class="trace-answer"><span>${escapeHtml(item.label || `Answer ${index + 1}`)}</span><strong>${escapeHtml(item.formattedAnswer || formatAnswer(item.answer))}</strong></div>`).join('')}</div>`
+      ? `<div class="trace-answer-list">${trace.answerDetails.map((item, index) => `<div class="trace-answer"><span>${escapeHtml(item.label || `Task ${index + 1}`)}</span><strong>${escapeHtml(item.formattedAnswer || formatAnswer(item.answer))}</strong></div>`).join('')}</div>`
       : `<div class="trace-answer"><span>Final answer</span><strong>${escapeHtml(trace.formattedAnswer || formatAnswer(trace.answer))}</strong></div>`;
-    return `<div class="calculation-trace">${seedInfo}<section><h5>Generated inputs</h5><div class="trace-inputs">${inputs || '<p>No input definitions.</p>'}</div></section>${collections ? `<section><h5>Generated collections</h5><div class="trace-steps">${collections}</div></section>` : ''}${mappings ? `<section><h5>Mappings</h5><div class="trace-steps">${mappings}</div></section>` : ''}<section><h5>Formula evaluation</h5><div class="trace-steps">${assignments || '<p>No assignments.</p>'}</div></section>${constraints ? `<section><h5>Constraints</h5><div class="trace-steps">${constraints}</div></section>` : ''}${answerDetails}</div>`;
+    return `<div class="calculation-trace">${seedInfo}<section><h5>Generated inputs</h5><div class="trace-inputs">${inputs || '<p>No input definitions.</p>'}</div></section>${collections ? `<section><h5>Generated collections</h5><div class="trace-steps">${collections}</div></section>` : ''}${mappings ? `<section><h5>Mappings</h5><div class="trace-steps">${mappings}</div></section>` : ''}<section><h5>Formula evaluation</h5><div class="trace-steps">${assignments || '<p>No assignments.</p>'}</div></section>${choices}${constraints ? `<section><h5>Constraints</h5><div class="trace-steps">${constraints}</div></section>` : ''}${answerDetails}</div>`;
   }
 
 async function checkExerciseAnswer(exercise, wrapper) {
@@ -1010,7 +1034,7 @@ function getAnswerFromExerciseUI(exercise, wrapper) {
     if (exercise.type === 'multiple-choice') {
       return wrapper.querySelector(`input[name="exercise-answer-${CSS.escape(exercise.id)}"]:checked`)?.value || '';
     }
-    if (hasMultipleAnswers(exercise)) {
+    if (hasMultipleTasks(exercise)) {
       const values = {};
       wrapper.querySelectorAll('[data-role="answer-input"][data-answer-id]').forEach(input => {
         values[input.dataset.answerId] = input.value.trim();
@@ -1046,8 +1070,11 @@ function addQuizProblem() {
   }
 
 function getSavedTemplateKind(template) {
-    if (template.kind) return template.kind;
-    try { return isSemanticTemplate(template.text) ? 'semantic' : 'deterministic'; }
+    if (template.kind === 'semantic' || template.kind === 'multiple-choice') return template.kind;
+    try {
+      const parsed = parseTemplate(template.text);
+      return isSemanticTemplate(parsed) ? 'semantic' : parsed.multipleChoice ? 'multiple-choice' : 'deterministic';
+    }
     catch { return 'invalid'; }
   }
 
@@ -1063,10 +1090,15 @@ function renderQuizBuilder() {
       return;
     }
 
-    const templateOptions = state.templates.map(template => ({
-      id: template.id,
-      label: `${template.name} · ${getSavedTemplateKind(template) === 'semantic' ? 'semantic' : 'randomized calculation'}`
-    }));
+    const templateOptions = state.templates.map(template => {
+      const kind = getSavedTemplateKind(template);
+      const kindLabel = kind === 'semantic'
+        ? 'semantic'
+        : kind === 'multiple-choice'
+          ? 'multiple choice'
+          : 'randomized calculation';
+      return { id: template.id, label: `${template.name} · ${kindLabel}` };
+    });
 
     els.quizBuilderList.className = '';
     els.quizBuilderList.innerHTML = problems.map((problem, index) => {
@@ -1248,7 +1280,7 @@ function saveCurrentQuizResponse() {
     let answer = '';
     if (exercise.type === 'multiple-choice') {
       answer = els.quizPlayerBody.querySelector('input[name="quiz-answer"]:checked')?.value || '';
-    } else if (hasMultipleAnswers(exercise)) {
+    } else if (hasMultipleTasks(exercise)) {
       const values = {};
       els.quizPlayerBody.querySelectorAll('[data-role="answer-input"][data-answer-id]').forEach(input => {
         values[input.dataset.answerId] = input.value.trim();
@@ -1337,8 +1369,8 @@ function formatFeedbackForDepth(exercise, result, depth) {
         ].filter(Boolean).join(' ')
       : '';
     const answerKey = formatAnswerKey(exercise);
-    const multiDetails = result.method === 'multi-answer' && result.message ? ` ${result.message}` : '';
-    return `${status} ${answerKey}${exercise.explanation ? ` Explanation: ${exercise.explanation}` : ''}${semanticDetails ? ` Feedback: ${semanticDetails}` : ''}${multiDetails}`;
+    const taskDetails = result.method === 'multiple-tasks' && result.message ? ` ${result.message}` : '';
+    return `${status} ${answerKey}${exercise.explanation ? ` Explanation: ${exercise.explanation}` : ''}${semanticDetails ? ` Feedback: ${semanticDetails}` : ''}${taskDetails}`;
   }
 
 function formatProvidedAnswer(answer) {
@@ -1349,11 +1381,11 @@ function formatProvidedAnswer(answer) {
   }
 
 async function evaluateAnswer(exercise, userAnswer) {
-    if (hasMultipleAnswers(exercise)) return evaluateMultipleAnswers(exercise, userAnswer);
+    if (hasMultipleTasks(exercise)) return evaluateMultipleTasks(exercise, userAnswer);
     return evaluateSingleAnswer(exercise, userAnswer);
   }
 
-async function evaluateMultipleAnswers(exercise, userAnswer) {
+async function evaluateMultipleTasks(exercise, userAnswer) {
     const answers = userAnswer && typeof userAnswer === 'object' ? userAnswer : {};
     const parts = [];
     for (let index = 0; index < exercise.answerItems.length; index += 1) {
@@ -1372,7 +1404,7 @@ async function evaluateMultipleAnswers(exercise, userAnswer) {
       }, provided);
       parts.push({
         id: item.id,
-        label: item.label || `Answer ${index + 1}`,
+        label: item.label || `Task ${index + 1}`,
         expected: item.answer,
         provided,
         ...result
@@ -1388,9 +1420,9 @@ async function evaluateMultipleAnswers(exercise, userAnswer) {
       total,
       missing,
       parts,
-      method: 'multi-answer',
+      method: 'multiple-tasks',
       message: [
-        `${correct} of ${total} answers correct.`,
+        `${correct} of ${total} tasks correct.`,
         ...parts.map((part, index) => `${index + 1}. ${part.label}: ${part.correct ? 'Correct' : `Incorrect — expected ${part.expected}`}`)
       ].join('\n')
     };
@@ -1717,7 +1749,7 @@ function exportWorkspace() {
     const exported = clone(state);
     exported.settings.apiKey = '';
     downloadJson(`study-forge-workspace-${new Date().toISOString().slice(0, 10)}.json`, {
-      app: 'Study Forge', version: 4, exportedAt: new Date().toISOString(), data: exported
+      app: 'Study Forge', version: 5, exportedAt: new Date().toISOString(), data: exported
     });
     toast('Workspace exported', 'Your study data was saved without the Gemini API key.', 'success');
   }

@@ -13,6 +13,9 @@ const SEMANTIC_TYPES = new Set([
   'semantic', 'semantic-answer', 'semantic-explanation', 'definition',
   'comparison', 'reasoning', 'phrase-completion', 'valid-statement', 'stated-answer'
 ]);
+const MULTIPLE_CHOICE_TYPE = 'multiple-choice';
+const MULTIPLE_TASKS_TYPE = 'multiple-tasks';
+const LEGACY_MULTIPLE_TASK_TYPES = new Set(['multiple-answer', 'multi-answer']);
 const KNOWN_SECTIONS = new Set([
   'metadata', 'definitions', 'mappings', 'formula', 'constraints',
   'answer', 'answers', 'repeated-answers', 'semantic-answer', 'choices',
@@ -21,33 +24,48 @@ const KNOWN_SECTIONS = new Set([
 
 export function parseTemplate(templateText) {
   const sections = splitTemplateSections(templateText);
-  const metadata = parseKeyValueSection(sections.metadata);
+  const metadata = normalizeTemplateMetadata(parseKeyValueSection(sections.metadata));
   const semanticAnswer = parseSemanticAnswerSection(sections['semantic-answer']);
   const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
-  const definitions = parseDefinitions(sections.definitions, { optional: semantic || Boolean(sections.collections) });
+  const multipleChoice = metadata.TYPE === MULTIPLE_CHOICE_TYPE;
+  const definitions = parseDefinitions(sections.definitions, {
+    optional: semantic || multipleChoice || Boolean(sections.collections)
+  });
   const collections = parseCollectionsSection(sections.collections);
   const explicitMappings = parseMappingsSection(sections.mappings);
-  const formula = parseFormulaSection(sections.formula, { optional: semantic || Boolean(sections['repeated-answers']) });
+  const formula = parseFormulaSection(sections.formula, {
+    optional: semantic || multipleChoice || Boolean(sections['repeated-answers'])
+  });
   const mappings = mergeMappings(explicitMappings, formula.mappings);
   const constraints = parseConstraints(sections.constraints);
   const answerConfig = semantic
     ? createSemanticAnswerConfig(semanticAnswer)
-    : parseAnswerSection(sections.answer, formula.assignments);
+    : multipleChoice
+      ? createMultipleChoiceAnswerConfig()
+      : parseAnswerSection(sections.answer, formula.assignments);
   const answerConfigs = semantic
     ? [answerConfig]
+    : multipleChoice
+      ? []
     : (!sections.answers && !sections.answer && !formula.assignments.length && sections['repeated-answers'])
       ? []
       : parseAnswersSection(sections.answers, answerConfig);
-  const repeatedAnswerConfigs = semantic
+  const repeatedAnswerConfigs = semantic || multipleChoice
     ? []
     : parseRepeatedAnswersSection(sections['repeated-answers'], answerConfig);
   const feedback = parseFeedbackSection(sections.feedback);
-  const choices = parseKeyValueSection(sections.choices, { allowRepeated: true });
+  const choices = parseChoicesSection(sections.choices, { required: multipleChoice });
   const seedSpec = parseSeedSpec(metadata.SEED);
   validateCollectionNamespaces(definitions, collections, mappings, formula.assignments);
 
   if (semantic && !semanticAnswer.REFERENCE) {
     throw new Error('Semantic templates need ## Semantic Answer with REFERENCE: text.');
+  }
+  if (multipleChoice && (sections.answers || sections['repeated-answers'])) {
+    throw new Error('Multiple-choice templates use ## Choices, not ## Answers or ## Repeated Answers.');
+  }
+  if (!multipleChoice && sections.choices) {
+    throw new Error('The ## Choices section requires TYPE: multiple-choice.');
   }
 
   return {
@@ -66,10 +84,11 @@ export function parseTemplate(templateText) {
     repeatedAnswerConfigs,
     semanticAnswer,
     semantic,
+    multipleChoice,
     feedback,
     choices,
     seedSpec,
-    answerVariable: answerConfig.valueVariable
+    answerVariable: multipleChoice ? choices.correctExpression : answerConfig.valueVariable
   };
 }
 
@@ -131,7 +150,28 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       });
     }
 
-    const standardAnswers = resolveConfiguredAnswers(parsed.answerConfigs, variables);
+    let resolvedChoices = null;
+    if (parsed.multipleChoice) {
+      try {
+        resolvedChoices = resolveMultipleChoice(parsed.choices, variables, random, parsed.answerConfig);
+      } catch (error) {
+        if (/options must be distinct/i.test(String(error?.message || error))) {
+          lastConstraintTrace = [
+            ...constraintTrace,
+            {
+              expression: 'multiple-choice options are distinct',
+              substitutedExpression: String(error.message || error),
+              passed: false
+            }
+          ];
+          continue;
+        }
+        throw error;
+      }
+    }
+    const standardAnswers = parsed.multipleChoice
+      ? [resolvedChoices.answerDetail]
+      : resolveConfiguredAnswers(parsed.answerConfigs, variables);
     const repeatedAnswers = resolveRepeatedAnswers(parsed.repeatedAnswerConfigs, variables);
     const answers = [...standardAnswers, ...repeatedAnswers];
     const primaryAnswer = answers[0];
@@ -182,6 +222,14 @@ export function instantiateParsedTemplate(parsed, options = {}) {
         required: dependencies.has(step.name)
       })),
       constraints: constraintTrace,
+      choices: resolvedChoices
+        ? {
+            options: resolvedChoices.options,
+            correctChoice: resolvedChoices.correctChoice,
+            correctValue: resolvedChoices.correctValue,
+            shuffled: parsed.choices.shuffle
+          }
+        : null,
       answerVariable: primaryAnswer.valueVariable,
       answerVariables: answers.map(item => item.valueVariable),
       answerDetails: answers,
@@ -200,6 +248,9 @@ export function instantiateParsedTemplate(parsed, options = {}) {
       formattedAnswer: primaryAnswer.formattedAnswer,
       answerUnit: primaryAnswer.answerUnit,
       acceptedAnswers: primaryAnswer.acceptedAnswers,
+      options: resolvedChoices?.options || [],
+      correctChoice: resolvedChoices?.correctChoice || '',
+      correctValue: resolvedChoices?.correctValue,
       answers,
       answerConfig: { ...primaryAnswer.answerConfig },
       answerConfigs: parsed.answerConfigs.map(config => ({ ...config })),
@@ -221,7 +272,7 @@ export function instantiateParsedTemplate(parsed, options = {}) {
   );
 }
 
-export function resolveAnswerDependencies(parsed) {
+export function resolveAnswerDependencies(parsed, options = {}) {
   const graph = new Map();
 
   parsed.mappings.forEach(mapping => {
@@ -248,6 +299,14 @@ export function resolveAnswerDependencies(parsed) {
   if (parsed.semantic) {
     extractPlaceholders(parsed.semanticAnswer?.REFERENCE || '').forEach(visit);
     extractPlaceholders(parsed.sections.question || '').forEach(visit);
+  } else if (parsed.multipleChoice) {
+    const expressions = options.includeDistractors
+      ? [parsed.choices.correctExpression, ...(parsed.choices.distractorExpressions || [])]
+      : [parsed.choices.correctExpression];
+    expressions.filter(Boolean).forEach(expression => {
+      extractIdentifiers(expression).forEach(visit);
+      extractPlaceholders(expression).forEach(visit);
+    });
   } else {
     (parsed.answerConfigs?.length ? parsed.answerConfigs : [parsed.answerConfig])
       .map(config => config?.valueVariable)
@@ -324,6 +383,12 @@ export function formatTraceAsText(trace) {
     });
   }
 
+  if (trace.choices?.options?.length) {
+    lines.push('', 'Generated choices:');
+    trace.choices.options.forEach((option, index) => lines.push(`${index + 1}. ${option}`));
+    lines.push(`Correct choice: ${trace.choices.correctChoice}`);
+  }
+
   if (trace.constraints?.length) {
     lines.push('', 'Constraints:');
     trace.constraints.forEach(item => lines.push(`${item.passed ? 'PASS' : 'FAIL'}: ${item.expression}`));
@@ -332,7 +397,7 @@ export function formatTraceAsText(trace) {
   if (trace.semantic) {
     lines.push('', `Reference answer: ${trace.referenceAnswer || ''}`);
   } else if (trace.answerDetails?.length > 1) {
-    lines.push('', 'Final answers:');
+    lines.push('', 'Final task answers:');
     trace.answerDetails.forEach(item => {
       lines.push(`${item.label || item.valueVariable}: ${item.formattedAnswer || formatAnswer(item.answer)}`);
     });
@@ -370,9 +435,10 @@ function splitTemplateSections(text) {
     sections[name] = source.slice(start, end).trim();
   });
 
-  const metadata = parseKeyValueSection(sections.metadata);
+  const metadata = normalizeTemplateMetadata(parseKeyValueSection(sections.metadata));
   const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
-  if (!semantic) {
+  const multipleChoice = metadata.TYPE === MULTIPLE_CHOICE_TYPE;
+  if (!semantic && !multipleChoice) {
     if (!sections.definitions && !sections.collections) {
       throw new Error('The template needs a ## Definitions or ## Collections section.');
     }
@@ -380,11 +446,22 @@ function splitTemplateSections(text) {
       throw new Error('The template needs a ## Formula or ## Repeated Answers section.');
     }
   }
+  if (multipleChoice && !sections.choices) {
+    throw new Error('Multiple-choice templates need a ## Choices section.');
+  }
   return sections;
 }
 
 function normalizeSectionName(name) {
   return String(name).trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function normalizeTemplateMetadata(metadata = {}) {
+  const normalized = { ...metadata };
+  const type = String(normalized.TYPE || '').trim().toLowerCase().replace(/_/g, '-');
+  if (LEGACY_MULTIPLE_TASK_TYPES.has(type)) normalized.TYPE = MULTIPLE_TASKS_TYPE;
+  else if (type) normalized.TYPE = type;
+  return normalized;
 }
 
 function parseKeyValueSection(text, options = {}) {
@@ -437,6 +514,41 @@ function parseKeyValueSection(text, options = {}) {
   }
   commitBlock();
   return result;
+}
+
+function parseChoicesSection(text, options = {}) {
+  if (!String(text || '').trim()) {
+    if (options.required) throw new Error('The Choices section is empty.');
+    return { correctExpression: '', distractorExpressions: [], shuffle: true };
+  }
+  const values = parseKeyValueSection(text, { allowRepeated: true });
+  const supported = new Set(['CORRECT', 'DISTRACTOR', 'SHUFFLE']);
+  Object.keys(values).forEach(key => {
+    if (!supported.has(key)) throw new Error(`Unsupported Choices term: ${key}.`);
+  });
+  const correct = values.CORRECT || [];
+  const distractors = values.DISTRACTOR || [];
+  const shuffleValues = values.SHUFFLE || [];
+  if (correct.length !== 1) {
+    throw new Error('The Choices section needs exactly one CORRECT: entry.');
+  }
+  if (distractors.length < 1) {
+    throw new Error('The Choices section needs at least one DISTRACTOR: entry.');
+  }
+  const rawChoices = [correct[0], ...distractors].map(value => String(value).trim().toLowerCase());
+  if (new Set(rawChoices).size !== rawChoices.length) {
+    throw new Error('Multiple-choice options must be distinct; the same choice expression is listed more than once.');
+  }
+  if (shuffleValues.length > 1) throw new Error('The Choices section can contain only one SHUFFLE: entry.');
+  const shuffleText = String(shuffleValues[0] ?? 'true').trim().toLowerCase();
+  if (!['true', 'false', 'yes', 'no', '1', '0'].includes(shuffleText)) {
+    throw new Error('SHUFFLE must be true or false.');
+  }
+  return {
+    correctExpression: String(correct[0]).trim(),
+    distractorExpressions: distractors.map(value => String(value).trim()),
+    shuffle: ['true', 'yes', '1'].includes(shuffleText)
+  };
 }
 
 function parseDefinitions(text, options = {}) {
@@ -863,6 +975,20 @@ function createSemanticAnswerConfig(values = {}) {
   };
 }
 
+function createMultipleChoiceAnswerConfig() {
+  return {
+    valueVariable: '',
+    label: 'Correct option',
+    type: 'multiple-choice',
+    unit: '',
+    round: null,
+    tolerance: null,
+    toleranceType: 'absolute',
+    equivalence: 'exact',
+    acceptedAnswers: []
+  };
+}
+
 function parseSemanticList(value) {
   if (!String(value || '').trim()) return [];
   return String(value).split(/\s*;\s*|\s*\|\s*/).map(item => item.trim()).filter(Boolean);
@@ -1106,6 +1232,90 @@ function resolveConfiguredAnswers(configs, variables) {
       answerConfig: { ...config }
     };
   });
+}
+
+function resolveMultipleChoice(config, variables, random, answerConfig) {
+  const correctValue = resolveChoiceValue(config.correctExpression, variables);
+  const distractorValues = config.distractorExpressions.map(expression => resolveChoiceValue(expression, variables));
+  const entries = [
+    { value: correctValue, correct: true },
+    ...distractorValues.map(value => ({ value, correct: false }))
+  ].map(entry => ({ ...entry, text: formatChoiceValue(entry.value) }));
+
+  const seen = new Map();
+  entries.forEach(entry => {
+    const key = normalizeChoiceKey(entry.text);
+    if (seen.has(key)) {
+      throw new Error(`Multiple-choice options must be distinct; “${entry.text}” was generated more than once.`);
+    }
+    seen.set(key, entry);
+  });
+
+  const ordered = config.shuffle ? shuffleWithRandom(entries, random) : entries;
+  const correctChoice = entries.find(entry => entry.correct).text;
+  return {
+    options: ordered.map(entry => entry.text),
+    correctChoice,
+    correctValue,
+    answerDetail: {
+      id: 'CHOICE',
+      valueVariable: config.correctExpression,
+      label: 'Correct option',
+      answer: correctChoice,
+      rawAnswer: correctValue,
+      answerUnit: '',
+      formattedAnswer: correctChoice,
+      acceptedAnswers: [],
+      answerConfig: { ...answerConfig }
+    }
+  };
+}
+
+function resolveChoiceValue(expression, variables) {
+  const source = String(expression || '').trim();
+  if (!source) throw new Error('Choice entries cannot be empty.');
+  if (source in variables) return variables[source];
+  if (/^(['"])[\s\S]*\1$/.test(source)) {
+    const literal = parseScalar(source);
+    return typeof literal === 'string' && literal.includes('{')
+      ? renderTemplateText(literal, variables)
+      : literal;
+  }
+  if (/^-?\d+(?:\.\d+)?$/.test(source)) return Number(source);
+  if (source.includes('{')) return renderTemplateText(source, variables);
+
+  const identifiers = extractIdentifiers(source);
+  const hasExpressionSyntax = /[+\-*/%^(),<>=]/.test(source)
+    || identifiers.some(name => name in variables)
+    || ALLOWED_FUNCTIONS.some(name => new RegExp(`\\b${name}\\s*\\(`, 'i').test(source));
+  if (hasExpressionSyntax && identifiers.every(name => name in variables)) {
+    const value = evaluateNumericExpression(source, variables);
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`Choice expression “${source}” did not produce a finite number.`);
+    }
+    return value;
+  }
+  return source;
+}
+
+function formatChoiceValue(value) {
+  if (typeof value === 'number') return formatAnswer(value);
+  return formatTemplateValue(value);
+}
+
+function normalizeChoiceKey(value) {
+  const text = String(value).trim();
+  const number = Number(text);
+  return text !== '' && Number.isFinite(number) ? `number:${number}` : `text:${text.toLowerCase()}`;
+}
+
+function shuffleWithRandom(values, random) {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
 }
 
 function buildSemanticTemplateInstance({

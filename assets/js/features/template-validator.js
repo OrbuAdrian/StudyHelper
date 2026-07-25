@@ -159,6 +159,9 @@ function runStaticChecks(parsed, issues) {
       || parsed.sections.question.includes(`{{#each ${name}}`)
       || placeholderSet.has(name)));
   const answerDependencies = resolveAnswerDependencies(parsed);
+  const allOutcomeDependencies = parsed.multipleChoice
+    ? resolveAnswerDependencies(parsed, { includeDistractors: true })
+    : answerDependencies;
   const requiredDefinitions = parsed.definitions
     .map(item => item.name)
     .filter(name => answerDependencies.has(name));
@@ -216,7 +219,7 @@ function runStaticChecks(parsed, issues) {
 
   parsed.definitions.forEach(definition => {
     const usedInQuestion = placeholderSet.has(definition.name);
-    const usedInAnswer = answerDependencies.has(definition.name);
+    const usedInAnswer = allOutcomeDependencies.has(definition.name);
     const usedByMapping = parsed.mappings.some(mapping => mapping.sourceName === definition.name);
     if (!usedInQuestion && !usedInAnswer && !usedByMapping) {
       issues.push(issue('warning', 'unused-definition', `${definition.name} is defined but never used.`));
@@ -244,7 +247,7 @@ function runStaticChecks(parsed, issues) {
 
   parsed.collections.forEach(collection => {
     const usedInQuestion = visibleCollections.has(collection.name);
-    const usedInAnswer = answerDependencies.has(collection.name);
+    const usedInAnswer = allOutcomeDependencies.has(collection.name);
     const usedElsewhere = parsed.assignments.some(assignment => extractIdentifiers(assignment.expression).includes(collection.name))
       || parsed.constraints.some(constraint => extractIdentifiers(constraint.expression).includes(collection.name))
       || (parsed.repeatedAnswerConfigs || []).some(config => config.source === collection.name);
@@ -321,9 +324,13 @@ function runStaticChecks(parsed, issues) {
     });
   });
 
-  if (!parsed.answerVariable && !(parsed.repeatedAnswerConfigs || []).length) {
+  if (parsed.multipleChoice) {
+    validateChoiceExpressions(parsed, available, knownQuestionVariables, issues);
+  }
+
+  if (!parsed.multipleChoice && !parsed.answerVariable && !(parsed.repeatedAnswerConfigs || []).length) {
     issues.push(issue('error', 'missing-answer', 'No final answer variable or repeated answer group is configured.'));
-  } else if (parsed.answerVariable && !available.has(parsed.answerVariable)) {
+  } else if (!parsed.multipleChoice && parsed.answerVariable && !available.has(parsed.answerVariable)) {
     issues.push(issue('error', 'unknown-answer-variable', `Answer VALUE refers to unknown variable ${parsed.answerVariable}.`));
   }
 
@@ -344,7 +351,7 @@ function runStaticChecks(parsed, issues) {
   });
 
   parsed.assignments.forEach(assignment => {
-    if (!answerDependencies.has(assignment.name)) issues.push(issue(
+    if (!allOutcomeDependencies.has(assignment.name)) issues.push(issue(
       'warning',
       'unused-assignment',
       `${assignment.name} is calculated but does not influence the final answer.`
@@ -352,14 +359,14 @@ function runStaticChecks(parsed, issues) {
   });
 
   parsed.mappings.forEach(mapping => {
-    if (!mapping.outputNames.some(name => answerDependencies.has(name))) issues.push(issue(
+    if (!mapping.outputNames.some(name => allOutcomeDependencies.has(name))) issues.push(issue(
       'warning',
       'unused-mapping',
       `${mapping.outputName} is mapped but does not influence the final answer.`
     ));
   });
 
-  if (parsed.answerVariable && !parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
+  if (!parsed.multipleChoice && parsed.answerVariable && !parsed.assignments.some(item => item.name === 'ANSWER') && parsed.answerVariable !== 'ANSWER') {
     issues.push(issue(
       'warning',
       'implicit-answer',
@@ -384,6 +391,34 @@ function runStaticChecks(parsed, issues) {
     'invalid-equivalence',
     'EQUIVALENCE must be exact, numeric, symbolic, semantic, or combined.'
   ));
+}
+
+function validateChoiceExpressions(parsed, available, knownQuestionVariables, issues) {
+  const expressions = [
+    ['CORRECT', parsed.choices.correctExpression],
+    ...(parsed.choices.distractorExpressions || []).map(expression => ['DISTRACTOR', expression])
+  ];
+  expressions.forEach(([label, expression]) => {
+    const source = String(expression || '').trim();
+    extractPlaceholders(source).forEach(name => {
+      if (!knownQuestionVariables.has(name)) issues.push(issue(
+        'error',
+        'unknown-choice-placeholder',
+        `${label} choice uses undefined placeholder {${name}}.`
+      ));
+    });
+    if (/^(['"])[\s\S]*\1$/.test(source) || /^-?\d+(?:\.\d+)?$/.test(source) || source.includes('{')) return;
+    const identifiers = extractIdentifiers(source);
+    const expressionLike = /[+\-*/%^(),<>=]/.test(source) || /^[A-Z][A-Z0-9_]*$/.test(source);
+    if (!expressionLike) return;
+    identifiers.forEach(name => {
+      if (!available.has(name)) issues.push(issue(
+        'error',
+        'unknown-choice-variable',
+        `${label} choice “${source}” uses unknown variable ${name}. Quote literal text choices.`
+      ));
+    });
+  });
 }
 
 function runCollectionStaticChecks(parsed, issues, initialAvailable) {
@@ -436,7 +471,7 @@ function runTrialChecks(parsed, runs, issues) {
     try {
       const instance = instantiateParsedTemplate(parsed, { seed: index + 1 });
       successes += 1;
-      answers.push(instance.answer);
+      answers.push(instance.correctValue ?? instance.answer);
       attemptCounts.push(instance.attempt);
       uniqueQuestions.add(instance.question);
       if (samples.length < 3) samples.push(instance);
@@ -504,7 +539,10 @@ function runSeedChecks(parsed, issues) {
   try {
     const first = instantiateParsedTemplate(parsed, { seed, random: createSeededRandom(seed) });
     const second = instantiateParsedTemplate(parsed, { seed, random: createSeededRandom(seed) });
-    if (first.question !== second.question || first.answer !== second.answer || first.attempt !== second.attempt) {
+    if (first.question !== second.question
+      || first.answer !== second.answer
+      || JSON.stringify(first.options || []) !== JSON.stringify(second.options || [])
+      || first.attempt !== second.attempt) {
       issues.push(issue('error', 'seed-not-reproducible', 'The same seed did not reproduce the same generated exercise.'));
     }
   } catch (error) {

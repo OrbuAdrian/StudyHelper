@@ -49,7 +49,7 @@ The authoritative reference answer is always retained in `semanticConfig.referen
 
 ### `assets/js/features/template-engine.js`
 
-Parses Template Format v2 while remaining compatible with v1.1 and the original compact format. It handles deterministic and semantic templates, scalar values, seeded matrices and lists, repeated and conditional plain-text rendering, multiline values, collection-aware formulas, constraints, fixed and repeated answer configurations, semantic reference answers, dependency tracing, highlighted values, and calculation traces.
+Parses Template Format v2 while remaining compatible with v1.1 and the original compact format. It handles deterministic and semantic templates, scalar values, seeded matrices and lists, repeated and conditional plain-text rendering, multiline values, collection-aware formulas, constraints, single-answer and multiple-tasks configurations, template-generated multiple-choice options, semantic reference answers, dependency tracing, highlighted values, and calculation traces.
 
 ### `assets/js/features/template-validator.js`
 
@@ -66,8 +66,9 @@ Template instantiation proceeds in this order:
 5. evaluate formula assignments and collection functions;
 6. evaluate derived constraints;
 7. render conditional blocks, repeated blocks, matrix directives, and placeholders;
-8. resolve fixed answer configurations and dynamic repeated answer groups;
-9. produce the concrete exercise, dependency highlights, and trace.
+8. resolve fixed task-answer configurations and dynamic repeated task groups, or resolve and seed-shuffle a multiple-choice option set;
+9. reject duplicate concrete choices when necessary and retry generation;
+10. produce the concrete exercise, dependency highlights, and trace.
 
 Templates remain plain text. The renderer understands only the documented structural directives and never evaluates template-provided HTML, CSS, JavaScript, or browser events.
 
@@ -179,3 +180,9 @@ CSS is loaded in dependency order:
 5. Coordinate the feature from `app.js`.
 6. Extend state migration when the stored schema changes.
 7. Add a browser-independent test under `tests/`.
+
+## Multiple-choice templates and multiple-tasks naming
+
+Template-generated choice questions use `TYPE: multiple-choice` and `## Choices`. The template engine resolves the correct expression and distractor expressions after definitions, mappings, collections, formulas, and constraints. It rejects duplicate concrete options and shuffles valid options with the same seeded random stream used for the exercise instance.
+
+Exercises with several independently graded free-response fields use the public type name `multiple-tasks`. Legacy `multiple-answer` and `multi-answer` values are normalized during parsing and state loading so older browser data remains usable.

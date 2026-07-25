@@ -7,7 +7,7 @@ Study Forge is a client-only study workspace built with HTML, CSS, and JavaScrip
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-dynamic-templates-v2
+cd study-forge-multiple-choice
 python3 -m http.server 8080
 ```
 
@@ -33,7 +33,7 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Independent content-language selection for summaries and exercises.
 - Topic, pasted-text, TXT, and PDF study sources.
 - Gemini-generated summaries in English or Romanian.
-- Deterministic single-answer and multi-answer template exercises.
+- Deterministic single-answer, multiple-tasks, and multiple-choice template exercises.
 - Semantic explanation, definition, comparison, reasoning, and phrase-completion exercises.
 - User-approved reference answers for semantic grading.
 - Lenient, moderate, strict, and exacting semantic validation.
@@ -90,6 +90,8 @@ The optional **Remember API key** setting stores the key in `localStorage`. With
 
 The Template Engine includes separate scalar and dynamic examples. A detailed reference is available in [`TEMPLATE_FORMAT.md`](TEMPLATE_FORMAT.md).
 
+The included [`MULTIPLE_CHOICE_TEMPLATE_EXAMPLE.txt`](MULTIPLE_CHOICE_TEMPLATE_EXAMPLE.txt) demonstrates generated distractors and seeded option shuffling.
+
 Supported sections:
 
 ```text
@@ -122,7 +124,8 @@ Important features include:
 - dynamic repeated answer fields generated per row, column, or list item;
 - Boolean constraints;
 - constraint-aware generation retries;
-- single or multiple configured deterministic answers;
+- single-answer and multiple-tasks deterministic exercises;
+- template-generated multiple-choice options with seeded shuffling;
 - semantic reference answers with strictness and optional concept guidance;
 - answer rounding, tolerance, equivalence, alternatives, and units;
 - dependency-based value highlighting;
@@ -155,6 +158,7 @@ node tests/startup-smoke.test.mjs
 node tests/template-validator.test.mjs
 node tests/template-format-v11.test.mjs
 node tests/template-format-v2.test.mjs
+node tests/template-multiple-choice.test.mjs
 node tests/quiz-blueprint.test.mjs
 node tests/semantic-exercise.test.mjs
 node tests/semantic-template.test.mjs
@@ -164,7 +168,7 @@ node tests/static-integration.test.mjs
 ## Project structure
 
 ```text
-study-forge-dynamic-templates-v2/
+study-forge-multiple-choice/
 ├── index.html
 ├── README.md
 ├── ARCHITECTURE.md
@@ -174,6 +178,7 @@ study-forge-dynamic-templates-v2/
 │   ├── template-validator.test.mjs
 │   ├── template-format-v11.test.mjs
 │   ├── template-format-v2.test.mjs
+│   ├── template-multiple-choice.test.mjs
 │   ├── quiz-blueprint.test.mjs
 │   ├── semantic-exercise.test.mjs
 │   ├── semantic-template.test.mjs

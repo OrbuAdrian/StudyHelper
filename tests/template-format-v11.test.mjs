@@ -55,7 +55,7 @@ assert(constrainedInstance.variables.B !== 0, 'Constraint retries should reject 
 assert(constrainedInstance.seed === 7, 'A fixed metadata seed should be used automatically.');
 
 
-const multiAnswer = `Calculate the sum and product of {A} and {B}.
+const multipleTasks = `Calculate the sum and product of {A} and {B}.
 
 ## Definitions
 A: first value (2..4)
@@ -74,8 +74,8 @@ PRODUCT:
 LABEL: Product
 ROUND: 0`;
 
-const multiInstance = instantiateTemplate(multiAnswer, { seed: 9 });
-assert(multiInstance.answers.length === 2, 'A multi-answer template should create two configured answers.');
-assert(multiInstance.trace.answerDetails.length === 2, 'The calculation trace should retain every final answer.');
+const multipleTasksInstance = instantiateTemplate(multipleTasks, { seed: 9 });
+assert(multipleTasksInstance.answers.length === 2, 'A multiple-tasks template should create two configured task answers.');
+assert(multipleTasksInstance.trace.answerDetails.length === 2, 'The calculation trace should retain every final answer.');
 
 console.log('Template format v1.1 tests passed.');
