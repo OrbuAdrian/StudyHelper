@@ -616,3 +616,8 @@ HINT: |
 ## Backward compatibility
 
 The original v1.1 sections, scalar placeholders, ranges, mappings, formulas, constraints, single answers, multiple fixed answers, semantic answers, seeds, highlighting, traces, template-driven quizzes, TXT export, and JSON export remain supported.
+
+
+## Semantic templates and flashcards
+
+Saved templates that use `## Semantic Answer` or `## Semantic Answers` automatically appear in Flashcard Builder. No additional flashcard syntax is required. The builder instantiates the template, resolves its authoritative reference answer or task answers, and lets Gemini decide whether source phrases should be combined into one card or divided into several cards. Deterministic templates and template-generated multiple-choice exercises are not offered as flashcard sources.

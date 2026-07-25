@@ -1,13 +1,13 @@
 # Study Forge
 
-Study Forge is a client-only study workspace built with HTML, CSS, and JavaScript. It creates Gemini-assisted summaries and exercises, generates deterministic exercises from local templates, builds randomized multi-problem quizzes, validates answers, and stores work in the browser.
+Study Forge is a client-only study workspace built with HTML, CSS, and JavaScript. It creates Gemini-assisted summaries and exercises, generates deterministic exercises from local templates, builds randomized multi-problem quizzes and Gemini-assisted flashcard sets, validates answers, and stores work in the browser.
 
 ## Run locally
 
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-semantic-tasks
+cd study-forge-flashcards
 python3 -m http.server 8080
 ```
 
@@ -33,16 +33,19 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Independent content-language selection for summaries and exercises.
 - Topic, pasted-text, TXT, and PDF study sources.
 - Gemini-generated summaries in English or Romanian.
-- Deterministic single-answer and multiple-tasks template exercises.
-- Template-generated multiple-choice exercises with seeded option shuffling.
-- Semantic single-response and semantic multiple-tasks exercises for explanations, definitions, comparisons, reasoning, and phrase completion.
+- Deterministic single-answer, multiple-tasks, and multiple-choice template exercises.
+- Semantic explanation, definition, comparison, reasoning, and phrase-completion exercises.
 - User-approved reference answers for semantic grading.
 - Lenient, moderate, strict, and exacting semantic validation.
 - Optional concept guidance entered manually or derived by Gemini from the reference answer.
 - Semantic questions become ungradable—not incorrect—when Gemini is unavailable.
 - Template Format v2 with backward-compatible scalar templates plus dynamic matrices, grids, lists, conditional/repeated question blocks, multiline fields, collection formulas, repeated answer groups, seeded generation, highlighting, validation, and calculation traces.
 - Quiz blueprints with unlimited problem slots and independent saved-template candidate pools.
-- Mixed-language quizzes.
+- A Flashcard Builder that uses only saved semantic templates.
+- Question flashcards with Gemini-graded short answers.
+- Option flashcards with one blank, stored choices, and local validation.
+- Gemini-controlled splitting and combining of reference-answer phrases according to context.
+- Mixed-language quizzes and flashcard sets.
 - Local browser persistence and TXT/JSON export.
 
 ## Language model
@@ -83,9 +86,29 @@ Open **Settings**, paste a Gemini API key, select a model, and test the connecti
 - AI summary generation;
 - AI exercise generation;
 - automatic semantic concept guidance;
-- semantic answer evaluation.
+- semantic answer evaluation;
+- flashcard generation from semantic template reference answers;
+- question-flashcard answer evaluation.
 
 The optional **Remember API key** setting stores the key in `localStorage`. Without it, the key remains in `sessionStorage` for the current browser session. A client-only application cannot fully protect a browser-visible key, so use a restricted key and avoid remembering it on shared devices.
+
+
+## Flashcard Builder
+
+The Flashcard Builder accepts only saved semantic templates. When a set is generated, Study Forge instantiates every selected template once so placeholders and seeded values are resolved, then sends each authoritative semantic reference answer to Gemini.
+
+Gemini decides the pedagogical card boundaries rather than following a fixed one-sentence/one-card rule:
+
+- context-dependent phrases may be combined into one card;
+- a dense phrase may be split into several atomic cards;
+- unrelated templates are not combined merely to reduce card count.
+
+Two set types are available:
+
+- **Question flashcards** rewrite source statements as direct questions with a short expected answer. Learner responses are semantically checked by Gemini against a private grading reference. Without Gemini, the card is answerable but ungradable.
+- **Option flashcards** rewrite source statements with exactly one `____` blank. Each card stores 3–5 distinct options and one correct option, so checking is local and does not require Gemini.
+
+Generated sets may be previewed, saved in the library, exported as TXT or JSON, and reviewed one card at a time. Every card stores source keys pointing back to the semantic template task blocks used to create it. Full semantic reference answers remain hidden during learner review. See [`FLASHCARDS.md`](FLASHCARDS.md).
 
 ## Template Format v2
 
@@ -166,17 +189,19 @@ node tests/quiz-blueprint.test.mjs
 node tests/semantic-exercise.test.mjs
 node tests/semantic-template.test.mjs
 node tests/static-integration.test.mjs
+node tests/flashcard-builder.test.mjs
 ```
 
 ## Project structure
 
 ```text
-study-forge-semantic-tasks/
+study-forge-flashcards/
 ├── index.html
 ├── README.md
 ├── ARCHITECTURE.md
 ├── TEMPLATE_FORMAT.md
 ├── SEMANTIC_EXERCISES.md
+├── FLASHCARDS.md
 ├── tests/
 │   ├── template-validator.test.mjs
 │   ├── template-format-v11.test.mjs
@@ -185,6 +210,7 @@ study-forge-semantic-tasks/
 │   ├── quiz-blueprint.test.mjs
 │   ├── semantic-exercise.test.mjs
 │   ├── semantic-template.test.mjs
+│   ├── flashcard-builder.test.mjs
 │   ├── startup-smoke.test.mjs
 │   └── static-integration.test.mjs
 └── assets/
@@ -209,15 +235,16 @@ study-forge-semantic-tasks/
             ├── answer-validation.js
             ├── quiz-blueprint.js
             ├── semantic-exercise.js
+            ├── flashcard-builder.js
             ├── template-engine.js
             └── template-validator.js
 ```
 
 ## External browser dependencies
 
-- Gemini API for AI generation and semantic validation
+- Gemini API for AI generation, flashcard generation, and semantic validation
 - PDF.js for PDF text extraction
 - math.js for expression equivalence
 - Google Fonts for typography
 
-Template parsing and instantiation, quiz blueprint resolution, local storage, TXT handling, direct deterministic exercises, numeric checks, and symbolic checks do not require Gemini. Semantic template instances can also be generated without Gemini; only semantic answer grading requires Gemini.
+Template parsing and instantiation, quiz blueprint resolution, local storage, TXT handling, direct deterministic exercises, numeric checks, and symbolic checks do not require Gemini. Semantic template instances can be generated without Gemini. Flashcard generation, question-flashcard grading, and semantic exercise grading require Gemini; option-flashcard review remains local.

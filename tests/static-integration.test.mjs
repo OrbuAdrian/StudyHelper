@@ -26,7 +26,10 @@ for (const id of [
   'directSemanticWrap',
   'directSemanticStrictness',
   'directConceptMode',
-  'loadMultipleChoiceTemplateButton'
+  'loadMultipleChoiceTemplateButton',
+  'generateFlashcardsButton',
+  'flashcardTemplatePool',
+  'flashcardModal'
 ]) assert.equal(ids.has(id), true, `Missing required control: ${id}`);
 
 assert.match(config, /uiLanguage:\s*'en'/);
@@ -52,4 +55,8 @@ assert.match(html, /## Semantic Answer/);
 assert.match(html, /## Semantic Answers/);
 assert.doesNotMatch(app, /Generated grading guidance/);
 assert.match(app, /semanticConfig:\s*semanticTask/);
+assert.match(app, /buildFlashcardGenerationPrompt/);
+assert.match(app, /buildQuestionFlashcardEvaluationPrompt/);
+assert.match(html, /data-view="flashcards"/);
+assert.match(config, /flashcardSets:\s*\[\]/);
 console.log('Static integration tests passed.');

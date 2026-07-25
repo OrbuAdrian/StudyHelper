@@ -1,5 +1,18 @@
 # Changelog
 
+## Flashcard Builder
+
+- Added a dedicated Flashcard Builder beside Quiz Builder.
+- Restricted flashcard source selection to saved semantic templates.
+- Instantiated selected semantic templates before generation so placeholders, randomized semantic values, and multiple semantic tasks are resolved.
+- Added Gemini-controlled phrase splitting and context-aware phrase combination.
+- Added question flashcards with short learner responses and Gemini semantic evaluation.
+- Added option flashcards with one blank, 3–5 distinct choices, one stored correct answer, and local validation.
+- Kept authoritative grading references hidden during learner review.
+- Added author-side previews, saved flashcard sets, TXT/JSON exports, review sessions, and gradable/ungradable scoring.
+- Added English and Romanian interface strings for the new workflow.
+- Added flashcard-domain regression tests and advanced workspace schema version 6.
+
 ## Semantic multiple-tasks and grading privacy
 
 - Added `## Semantic Answers` with separately labeled task blocks, reference answers, strictness settings, and optional guidance.

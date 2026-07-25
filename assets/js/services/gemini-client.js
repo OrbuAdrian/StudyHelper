@@ -1,11 +1,11 @@
-export async function callGemini({ prompt, apiKey, model, jsonMode = false }) {
+export async function callGemini({ prompt, apiKey, model, jsonMode = false, maxOutputTokens = null }) {
   if (!apiKey) throw new Error('A Gemini API key is required.');
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const generationConfig = {
     temperature: jsonMode ? 0.35 : 0.55,
     topP: 0.9,
-    maxOutputTokens: jsonMode ? 3000 : 6500
+    maxOutputTokens: Number(maxOutputTokens) > 0 ? Number(maxOutputTokens) : (jsonMode ? 3000 : 6500)
   };
 
   if (jsonMode) generationConfig.responseMimeType = 'application/json';

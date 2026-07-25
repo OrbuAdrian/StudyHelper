@@ -8,7 +8,7 @@ The project remains framework-free and client-only while separating deterministi
 
 ### `assets/js/app.js`
 
-The application coordinator. It binds controls, updates views, manages local state, starts quiz sessions, renders feedback, and connects modules to browser persistence and Gemini.
+The application coordinator. It binds controls, updates views, manages local state, starts quiz and flashcard review sessions, renders feedback, and connects modules to browser persistence and Gemini.
 
 ### `assets/js/core/config.js`
 
@@ -100,6 +100,24 @@ At quiz start, each slot is resolved in two stages:
 
 The generated exercise records `sourceTemplateId`, `sourceTemplateName`, and `templateSeed` for traceability. The quiz blueprint remains reusable and does not change when an instance is generated.
 
+
+### `assets/js/features/flashcard-builder.js`
+
+Pure flashcard-domain logic:
+
+- builds the Gemini generation prompt from instantiated semantic template task sources;
+- normalizes and validates question and option cards;
+- enforces one blank, distinct choices, and one correct option for option cards;
+- builds Gemini prompts for short-answer question-card grading;
+- normalizes question-card grading responses;
+- performs local option-card validation.
+
+## Flashcard generation path
+
+The Flashcard Builder filters the template library to semantic templates only. At generation time, every selected template is instantiated once and converted into one or more semantic source blocks. Gemini receives the resolved questions, task labels, authoritative reference answers, languages, and strictness levels. It chooses whether contextual phrases should be combined or split into multiple atomic cards.
+
+A saved flashcard set stores generated cards, selected template IDs, and compact source snapshots. Question cards are graded through Gemini using a private grading reference. Option cards store their choices and correct answer and are graded locally. Review attempts count correct, graded, and ungradable cards separately.
+
 ## Semantic template path
 
 A semantic template is identified by a semantic `TYPE`, `## Semantic Answer`, or `## Semantic Answers`. A single semantic response uses `## Semantic Answer`; semantic multiple-tasks use `TYPE: multiple-tasks` and one task block per response under `## Semantic Answers`. These templates can omit `## Definitions` and `## Formula`. Exercise Lab creates one long-form response control per semantic task and defers each task evaluation to Gemini. This path does not require numeric randomized validation.
@@ -158,7 +176,7 @@ Every summary and exercise also stores its own `language`. Quiz blueprints do no
 
 ## State and persistence
 
-`createEmptyState()` defines the schema. `loadState()` and workspace import normalize older exercises and quiz blueprints. The Gemini key is persisted only when the remember option is enabled.
+`createEmptyState()` defines summaries, exercises, templates, quizzes, flashcard sets, flashcard attempts, and settings. `loadState()` and workspace import normalize older exercises and quiz blueprints. The Gemini key is persisted only when the remember option is enabled.
 
 ## CSS organization
 

@@ -58,6 +58,15 @@ import {
   t,
   translateInterface
 } from './core/i18n.js';
+import {
+  buildFlashcardGenerationPrompt,
+  buildQuestionFlashcardEvaluationPrompt,
+  evaluateOptionFlashcard,
+  normalizeGeneratedFlashcardSet,
+  normalizeQuestionFlashcardEvaluation,
+  splitReferenceIntoPhraseUnits,
+  validateFlashcardSourceCoverage
+} from './features/flashcard-builder.js';
 
 'use strict';
 
@@ -65,6 +74,7 @@ let state = loadState();
 let activeLibraryTab = 'summaries';
 let pendingConfirmAction = null;
 let quizSession = null;
+let flashcardSession = null;
 let lastTemplateValidation = null;
 let translationFrame = null;
 const els = {};
@@ -89,7 +99,7 @@ function init() {
   document.querySelectorAll('[id]').forEach(el => { els[el.id] = el; });
   assertRequiredElements();
   bindNavigation(); bindGeneralControls(); bindSourceControls(); bindSummaryControls();
-  bindExerciseControls(); bindQuizControls(); bindLibraryControls(); bindSettingsControls(); bindModalControls();
+  bindExerciseControls(); bindQuizControls(); bindFlashcardControls(); bindLibraryControls(); bindSettingsControls(); bindModalControls();
   applyStoredStateToUI(); renderAll();
 
   if (typeof MutationObserver === 'function') {
@@ -103,7 +113,7 @@ function assertRequiredElements() {
     'mobileMenuButton', 'sidebar', 'mobileScrim', 'themeToggle',
     'sourceText', 'sourceTitle', 'useSourceButton', 'generateSummaryButton',
     'generateAiExerciseButton', 'createDirectExerciseButton', 'addQuizProblemButton',
-    'interfaceLanguage', 'interfaceLanguageQuick', 'defaultContentLanguage'
+    'generateFlashcardsButton', 'flashcardTemplatePool', 'interfaceLanguage', 'interfaceLanguageQuick', 'defaultContentLanguage'
   ];
   const missing = required.filter(id => !els[id]);
   if (missing.length) throw new Error(`Missing required interface elements: ${missing.join(', ')}`);
@@ -149,6 +159,8 @@ function loadState() {
         exercises: Array.isArray(stored.exercises) ? stored.exercises.map(normalizeStoredExercise) : [],
         templates: Array.isArray(stored.templates) ? stored.templates : [],
         quizzes: Array.isArray(stored.quizzes) ? stored.quizzes : [],
+        flashcardSets: Array.isArray(stored.flashcardSets) ? stored.flashcardSets : [],
+        flashcardAttempts: Array.isArray(stored.flashcardAttempts) ? stored.flashcardAttempts : [],
         attempts: Array.isArray(stored.attempts) ? stored.attempts : [],
         quizDraft: []
       };
@@ -158,6 +170,7 @@ function loadState() {
         problems: normalizeQuizProblems(quiz.problems || quiz.exercises || [], merged.templates, merged.exercises)
       }));
       if (merged.currentExercise) merged.currentExercise = normalizeStoredExercise(merged.currentExercise);
+      if (merged.currentFlashcardSet && typeof merged.currentFlashcardSet !== 'object') merged.currentFlashcardSet = null;
       if (!merged.settings.rememberApiKey) merged.settings.apiKey = '';
       return merged;
     } catch (error) {
@@ -248,6 +261,7 @@ function navigateTo(viewName, updateHash = true) {
     closeMobileMenu();
     if (viewName === 'library') renderLibrary();
     if (viewName === 'quiz') renderQuizBuilder();
+    if (viewName === 'flashcards') renderFlashcardBuilder();
   }
 
 function bindGeneralControls() {
@@ -1413,6 +1427,355 @@ function formatProvidedAnswer(answer) {
     return String(answer || '');
   }
 
+
+function bindFlashcardControls() {
+  els.generateFlashcardsButton.addEventListener('click', generateFlashcards);
+  els.startFlashcardsButton.addEventListener('click', startFlashcardReview);
+  els.saveFlashcardSetButton.addEventListener('click', saveCurrentFlashcardSet);
+  els.exportFlashcardsTxtButton.addEventListener('click', exportFlashcardsTxt);
+  els.exportFlashcardsJsonButton.addEventListener('click', exportFlashcardsJson);
+  els.flashcardType.addEventListener('change', updateFlashcardTypeHelp);
+  els.flashcardSetTitle.addEventListener('input', () => {
+    if (state.currentFlashcardSet) state.currentFlashcardSet.title = els.flashcardSetTitle.value;
+  });
+}
+
+function getSemanticTemplateDescriptors() {
+  return state.templates.flatMap(template => {
+    try {
+      const parsed = parseTemplate(template.text || '');
+      if (!isSemanticTemplate(parsed)) return [];
+      return [{
+        id: template.id,
+        name: template.name || parsed.metadata.TITLE || 'Semantic template',
+        language: ['en', 'ro'].includes(String(parsed.metadata.LANGUAGE || '').toLowerCase())
+          ? String(parsed.metadata.LANGUAGE).toLowerCase()
+          : (state.settings.contentLanguage || 'en'),
+        taskCount: parsed.semanticAnswers?.length || 1,
+        template
+      }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function updateFlashcardTypeHelp() {
+  if (!els.flashcardTypeHelp) return;
+  els.flashcardTypeHelp.textContent = els.flashcardType.value === 'option'
+    ? 'Learners select the word or phrase that correctly completes one blank. Validation is stored in the card and runs locally.'
+    : 'Learners type a short answer, which Gemini evaluates against the source context.';
+  scheduleInterfaceTranslation();
+}
+
+function renderFlashcardBuilder() {
+  if (!els.flashcardTemplatePool) return;
+  const descriptors = getSemanticTemplateDescriptors();
+  const selectedBefore = new Set([
+    ...Array.from(els.flashcardTemplatePool.selectedOptions || []).map(option => option.value),
+    ...(state.currentFlashcardSet?.templateIds || [])
+  ]);
+  els.flashcardTemplatePool.innerHTML = descriptors.map(item => `<option value="${escapeAttr(item.id)}" ${selectedBefore.has(item.id) ? 'selected' : ''}>${escapeHtml(item.name)} · ${escapeHtml(getLanguageName(item.language, state.settings.uiLanguage))}${item.taskCount > 1 ? ` · ${t('semanticTasksCount', state.settings.uiLanguage, { count: item.taskCount })}` : ''}</option>`).join('');
+  els.flashcardTemplatePool.size = Math.max(4, Math.min(10, descriptors.length || 4));
+  els.flashcardTemplateCount.textContent = t('flashcardsAvailable', state.settings.uiLanguage, { count: descriptors.length });
+
+  const set = state.currentFlashcardSet;
+  if (set) {
+    els.flashcardSetTitle.value = set.title || 'Semantic review';
+    els.flashcardType.value = set.type || 'question';
+  }
+  updateFlashcardTypeHelp();
+  renderFlashcardPreview();
+}
+
+function getSelectedFlashcardTemplateIds() {
+  return Array.from(els.flashcardTemplatePool.selectedOptions || []).map(option => option.value);
+}
+
+function buildFlashcardSourceBlocks(templateIds) {
+  const byId = new Map(state.templates.map(template => [template.id, template]));
+  const sources = [];
+  const snapshots = [];
+  templateIds.forEach(templateId => {
+    const template = byId.get(templateId);
+    if (!template) return;
+    const instance = instantiateTemplate(template.text || '');
+    if (instance.kind !== 'semantic') return;
+    const language = ['en', 'ro'].includes(String(instance.metadata?.LANGUAGE || '').toLowerCase())
+      ? String(instance.metadata.LANGUAGE).toLowerCase()
+      : (state.settings.contentLanguage || 'en');
+    const tasks = Array.isArray(instance.answers) && instance.answers.length
+      ? instance.answers
+      : [{
+          id: 'SEMANTIC_1',
+          label: instance.metadata?.TITLE || template.name || 'Semantic answer',
+          answer: instance.answer,
+          semanticConfig: instance.semanticConfig
+        }];
+    const sourceKeys = [];
+    tasks.forEach((task, index) => {
+      const sourceKey = `${template.id}:${task.id || index + 1}`;
+      const referenceAnswer = task.semanticConfig?.referenceAnswer || task.answer || '';
+      const phrases = splitReferenceIntoPhraseUnits(referenceAnswer, sourceKey);
+      if (!phrases.length) throw new Error(`Semantic task ${task.label || index + 1} has no usable reference-answer phrases.`);
+      sourceKeys.push(...phrases.map(phrase => phrase.sourceKey));
+      sources.push({
+        sourceKey,
+        templateId: template.id,
+        templateName: template.name || instance.metadata?.TITLE || 'Semantic template',
+        language,
+        question: instance.question,
+        taskLabel: task.label || `Task ${index + 1}`,
+        referenceAnswer,
+        phrases,
+        strictness: task.semanticConfig?.strictness || 'moderate'
+      });
+    });
+    snapshots.push({
+      templateId: template.id,
+      templateName: template.name || instance.metadata?.TITLE || 'Semantic template',
+      seed: instance.seed,
+      language,
+      sourceKeys
+    });
+  });
+  if (!sources.length) throw new Error('The selected templates did not produce any semantic reference answers.');
+  return { sources, snapshots };
+}
+
+async function generateFlashcards() {
+  if (!ensureApiKey()) return;
+  const templateIds = getSelectedFlashcardTemplateIds();
+  if (!templateIds.length) return toast('Semantic templates required', 'Select at least one saved semantic template.', 'error');
+  const title = els.flashcardSetTitle.value.trim() || 'Semantic review';
+  const type = els.flashcardType.value === 'option' ? 'option' : 'question';
+  setButtonLoading(els.generateFlashcardsButton, true, 'Generating…');
+  els.flashcardPreview.className = 'loading-state';
+  els.flashcardPreview.innerHTML = '<div><div class="loading-spinner"></div><strong>Building flashcards</strong><p>Gemini is deciding which statements should be combined or split for active recall.</p></div>';
+  try {
+    const { sources, snapshots } = buildFlashcardSourceBlocks(templateIds);
+    const raw = parseJsonResponse(await callGemini(buildFlashcardGenerationPrompt({ title, type, sources }), true, { maxOutputTokens: 8000 }));
+    const normalized = normalizeGeneratedFlashcardSet(raw, {
+      title,
+      type,
+      language: sources.every(source => source.language === sources[0].language) ? sources[0].language : 'en',
+      idFactory: () => uid()
+    });
+    const phraseSources = sources.flatMap(source => source.phrases.map(phrase => ({ ...phrase, language: source.language })));
+    const { phraseByKey } = validateFlashcardSourceCoverage(normalized.flashcards, phraseSources);
+    normalized.flashcards.forEach(card => {
+      const sourceLanguages = new Set(card.sourceKeys.map(key => phraseByKey.get(key).language));
+      if (sourceLanguages.size === 1) card.language = [...sourceLanguages][0];
+    });
+    state.currentFlashcardSet = {
+      id: uid(),
+      title: normalized.title || title,
+      type,
+      flashcards: normalized.flashcards,
+      templateIds,
+      sourceSnapshots: snapshots,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    els.flashcardSetTitle.value = state.currentFlashcardSet.title;
+    renderFlashcardPreview();
+    saveState();
+    toast('Flashcards generated', `${normalized.flashcards.length} ${type === 'option' ? 'option' : 'question'} flashcard${normalized.flashcards.length === 1 ? '' : 's'} created.`, 'success');
+  } catch (error) {
+    els.flashcardPreview.className = 'empty-state';
+    els.flashcardPreview.innerHTML = `<span>!</span><strong>Flashcard generation failed</strong><p>${escapeHtml(friendlyApiError(error))}</p>`;
+    toast('Flashcard generation failed', friendlyApiError(error), 'error');
+  } finally {
+    setButtonLoading(els.generateFlashcardsButton, false);
+  }
+}
+
+function renderFlashcardPreview() {
+  const set = state.currentFlashcardSet;
+  const cards = set?.flashcards || [];
+  els.flashcardGeneratedCount.textContent = cards.length;
+  const enabled = cards.length > 0;
+  [els.startFlashcardsButton, els.saveFlashcardSetButton, els.exportFlashcardsTxtButton, els.exportFlashcardsJsonButton].forEach(button => { button.disabled = !enabled; });
+  if (!enabled) {
+    els.flashcardPreview.className = 'empty-state';
+    els.flashcardPreview.innerHTML = '<span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates and generate a question or option flashcard set.</p>';
+    return;
+  }
+  els.flashcardPreview.className = 'flashcard-preview-grid';
+  els.flashcardPreview.innerHTML = cards.map((card, index) => {
+    const sourceCount = card.sourceKeys?.length || 0;
+    const body = card.type === 'option'
+      ? `<div class="flashcard-option-preview">${card.options.map(option => `<span class="${normalizeText(option) === normalizeText(card.expectedAnswer) ? 'correct-option' : ''}">${escapeHtml(option)}</span>`).join('')}</div>`
+      : `<div class="flashcard-preview-answer"><span>Expected short answer</span><strong>${escapeHtml(card.expectedAnswer)}</strong></div>`;
+    return `<article class="flashcard-preview-card"><div class="flashcard-preview-meta"><span>${index + 1}</span><b>${card.type === 'option' ? 'Option' : 'Question'}</b><small>${escapeHtml(getLanguageName(card.language || 'en', state.settings.uiLanguage))}</small></div><h4>${escapeHtml(card.front)}</h4>${body}<p>${escapeHtml(card.explanation || '')}</p><footer>${escapeHtml(t('sourceBlocksCount', state.settings.uiLanguage, { count: sourceCount }))}</footer></article>`;
+  }).join('');
+}
+
+function saveCurrentFlashcardSet() {
+  const current = state.currentFlashcardSet;
+  if (!current?.flashcards?.length) return toast('Generate flashcards first', 'There is no flashcard set to save.', 'error');
+  current.title = els.flashcardSetTitle.value.trim() || current.title || 'Semantic review';
+  current.updatedAt = new Date().toISOString();
+  const index = state.flashcardSets.findIndex(item => item.id === current.id);
+  if (index >= 0) state.flashcardSets.splice(index, 1, clone(current));
+  else state.flashcardSets.unshift(clone(current));
+  saveState();
+  renderRecentWork();
+  renderStats();
+  toast('Flashcard set saved', 'The flashcard set was added to your local library.', 'success');
+}
+
+function exportFlashcardsTxt() {
+  const set = state.currentFlashcardSet;
+  if (!set?.flashcards?.length) return;
+  const text = [
+    set.title,
+    '='.repeat(set.title.length),
+    `Type: ${set.type}`,
+    '',
+    ...set.flashcards.flatMap((card, index) => [
+      `${index + 1}. ${card.front}`,
+      ...(card.type === 'option' ? card.options.map((option, optionIndex) => `   ${String.fromCharCode(65 + optionIndex)}) ${option}`) : []),
+      `Answer: ${card.expectedAnswer}`,
+      card.explanation ? `Explanation: ${card.explanation}` : '',
+      ''
+    ].filter(Boolean))
+  ].join('\n');
+  downloadText(`${slugify(set.title)}-flashcards.txt`, text);
+}
+
+function exportFlashcardsJson() {
+  const set = state.currentFlashcardSet;
+  if (set?.flashcards?.length) downloadJson(`${slugify(set.title)}-flashcards.json`, set);
+}
+
+function startFlashcardReview() {
+  const set = state.currentFlashcardSet;
+  if (!set?.flashcards?.length) return toast('Generate flashcards first', 'There is no flashcard set to review.', 'error');
+  flashcardSession = {
+    set: clone(set),
+    index: 0,
+    responses: set.flashcards.map(() => ({ answer: '', result: null })),
+    awaitingNext: false,
+    completed: false
+  };
+  els.flashcardModal.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  renderFlashcardPlayer();
+}
+
+function renderFlashcardPlayer() {
+  if (!flashcardSession) return;
+  if (flashcardSession.completed) return renderFlashcardResults();
+  const { set, index } = flashcardSession;
+  const card = set.flashcards[index];
+  const response = flashcardSession.responses[index];
+  els.flashcardModalTitle.textContent = set.title;
+  els.flashcardProgressLabel.textContent = t('cardOf', state.settings.uiLanguage, { current: index + 1, total: set.flashcards.length });
+  els.flashcardProgressBar.style.width = `${((index + 1) / set.flashcards.length) * 100}%`;
+  const input = card.type === 'option'
+    ? `<div class="option-list">${card.options.map(option => `<label class="option-card"><input type="radio" name="flashcard-answer" value="${escapeAttr(option)}" ${response.answer === option ? 'checked' : ''}><span>${escapeHtml(option)}</span></label>`).join('')}</div>`
+    : `<label class="flashcard-answer-field"><span>Your short answer</span><input class="input" id="flashcardAnswerInput" value="${escapeAttr(response.answer || '')}" placeholder="Enter a few words or a short phrase"></label>`;
+  const result = response.result;
+  const feedback = result
+    ? `<div class="answer-feedback ${result.gradable === false ? 'neutral' : result.correct ? 'success' : 'error'}"><strong>${result.gradable === false ? 'Ungradable' : result.correct ? 'Correct' : 'Needs revision'}</strong><p>${escapeHtml(result.message || '')}</p><p><b>${escapeHtml(t('expectedAnswerLabel', state.settings.uiLanguage))}:</b> ${escapeHtml(card.expectedAnswer)}</p>${card.explanation ? `<p>${escapeHtml(card.explanation)}</p>` : ''}</div>`
+    : '';
+  const apiNotice = card.type === 'question'
+    ? `<div class="semantic-grading-notice ${getApiKey() ? 'ready' : 'unavailable'}"><span>${getApiKey() ? '◇' : '!'}</span><div><strong>Gemini answer check</strong><p>${getApiKey() ? 'Equivalent short answers are evaluated against the card’s authoritative source context.' : 'Gemini is unavailable, so this question card can be answered but not graded.'}</p></div></div>`
+    : '';
+  els.flashcardPlayerBody.innerHTML = `<article class="flashcard-review-card"><div class="flashcard-review-type">${card.type === 'option' ? 'Complete the statement' : 'Answer the question'}</div><h3>${escapeHtml(card.front)}</h3>${apiNotice}${input}${feedback}</article>`;
+  els.flashcardPreviousButton.disabled = index === 0;
+  els.flashcardSubmitButton.classList.toggle('hidden', flashcardSession.awaitingNext);
+  els.flashcardNextButton.classList.toggle('hidden', !flashcardSession.awaitingNext);
+  els.flashcardNextButton.textContent = index === set.flashcards.length - 1 ? 'Finish review' : 'Next card';
+}
+
+function getCurrentFlashcardAnswer() {
+  if (!flashcardSession || flashcardSession.completed) return '';
+  const card = flashcardSession.set.flashcards[flashcardSession.index];
+  const answer = card.type === 'option'
+    ? (els.flashcardPlayerBody.querySelector('input[name="flashcard-answer"]:checked')?.value || '')
+    : (els.flashcardPlayerBody.querySelector('#flashcardAnswerInput')?.value.trim() || '');
+  flashcardSession.responses[flashcardSession.index].answer = answer;
+  return answer;
+}
+
+async function submitFlashcardAnswer() {
+  if (!flashcardSession || flashcardSession.completed) return;
+  const answer = getCurrentFlashcardAnswer();
+  if (!answer) return toast('Answer required', 'Enter or select an answer first.', 'error');
+  const card = flashcardSession.set.flashcards[flashcardSession.index];
+  setButtonLoading(els.flashcardSubmitButton, true, 'Checking…');
+  try {
+    let result;
+    if (card.type === 'option') {
+      result = evaluateOptionFlashcard(card, answer);
+    } else if (!getApiKey()) {
+      result = { gradable: false, correct: null, score: 0, message: 'Gemini is unavailable, so this question flashcard cannot be graded right now.', method: 'unavailable' };
+    } else {
+      const raw = parseJsonResponse(await callGemini(buildQuestionFlashcardEvaluationPrompt({ card, learnerAnswer: answer }), true));
+      result = normalizeQuestionFlashcardEvaluation(raw, card.language || 'en');
+    }
+    flashcardSession.responses[flashcardSession.index].result = result;
+    flashcardSession.awaitingNext = true;
+    renderFlashcardPlayer();
+  } catch (error) {
+    toast('Could not check flashcard', friendlyApiError(error), 'error');
+  } finally {
+    setButtonLoading(els.flashcardSubmitButton, false);
+  }
+}
+
+function nextFlashcard() {
+  if (!flashcardSession) return;
+  if (flashcardSession.index >= flashcardSession.set.flashcards.length - 1) return finishFlashcardReview();
+  flashcardSession.index += 1;
+  flashcardSession.awaitingNext = Boolean(flashcardSession.responses[flashcardSession.index].result);
+  renderFlashcardPlayer();
+}
+
+function finishFlashcardReview() {
+  if (!flashcardSession) return;
+  flashcardSession.completed = true;
+  const graded = flashcardSession.responses.filter(response => response.result?.gradable !== false && response.result).length;
+  const correct = flashcardSession.responses.filter(response => response.result?.gradable !== false && response.result?.correct).length;
+  const ungradable = flashcardSession.responses.filter(response => response.result?.gradable === false).length;
+  state.flashcardAttempts.unshift({
+    id: uid(),
+    setId: flashcardSession.set.id,
+    setTitle: flashcardSession.set.title,
+    type: flashcardSession.set.type,
+    total: flashcardSession.set.flashcards.length,
+    graded,
+    correct,
+    ungradable,
+    completedAt: new Date().toISOString()
+  });
+  saveState();
+  renderFlashcardResults();
+}
+
+function renderFlashcardResults() {
+  const { set, responses } = flashcardSession;
+  const graded = responses.filter(response => response.result?.gradable !== false && response.result).length;
+  const correct = responses.filter(response => response.result?.gradable !== false && response.result?.correct).length;
+  const ungradable = responses.filter(response => response.result?.gradable === false).length;
+  const percentage = graded ? Math.round((correct / graded) * 100) : 0;
+  els.flashcardProgressLabel.textContent = t('flashcardComplete', state.settings.uiLanguage);
+  els.flashcardProgressBar.style.width = '100%';
+  els.flashcardPlayerBody.innerHTML = `<div class="empty-state compact"><span>◇</span><strong>${escapeHtml(t('flashcardGradedScore', state.settings.uiLanguage, { correct, graded, ungradable }))}</strong><p>${escapeHtml(graded ? t('flashcardPercentage', state.settings.uiLanguage, { percentage }) : t('flashcardNoGraded', state.settings.uiLanguage))}</p></div><div class="flashcard-result-list">${set.flashcards.map((card, index) => { const response = responses[index]; const result = response.result; return `<article><span>${result?.gradable === false ? '—' : result?.correct ? '✓' : '×'}</span><div><strong>${escapeHtml(card.front)}</strong><p>${escapeHtml(t('yourAnswer', state.settings.uiLanguage))}: ${escapeHtml(response.answer || t('noAnswer', state.settings.uiLanguage))}</p><p>${escapeHtml(t('expectedAnswerLabel', state.settings.uiLanguage))}: ${escapeHtml(card.expectedAnswer)}</p></div></article>`; }).join('')}</div>`;
+  els.flashcardPreviousButton.classList.add('hidden');
+  els.flashcardSubmitButton.classList.add('hidden');
+  els.flashcardNextButton.classList.remove('hidden');
+  els.flashcardNextButton.textContent = 'Close review';
+}
+
+function closeFlashcardModal() {
+  els.flashcardModal.classList.add('hidden');
+  document.body.style.overflow = '';
+  flashcardSession = null;
+}
+
 async function evaluateAnswer(exercise, userAnswer) {
     if (hasMultipleTasks(exercise)) return evaluateMultipleTasks(exercise, userAnswer);
     return evaluateSingleAnswer(exercise, userAnswer);
@@ -1550,19 +1913,24 @@ function bindLibraryControls() {
 
 function renderLibrary() {
     const data = state[activeLibraryTab] || [];
-    if (!data.length) { els.libraryContent.innerHTML = `<div class="empty-state"><span>▣</span><strong>No ${escapeHtml(activeLibraryTab)} saved</strong><p>Items you save will appear here and remain available in this browser.</p></div>`; return; }
+    if (!data.length) {
+      const emptyLabel = ({ summaries: 'summaries', exercises: 'exercises', templates: 'templates', quizzes: 'quizzes', flashcardSets: 'flashcard sets', attempts: 'attempts' })[activeLibraryTab] || activeLibraryTab;
+      els.libraryContent.innerHTML = `<div class="empty-state"><span>▣</span><strong>No ${escapeHtml(emptyLabel)} saved</strong><p>Items you save will appear here and remain available in this browser.</p></div>`;
+      return;
+    }
     els.libraryContent.innerHTML = `<div class="library-grid">${data.map(item => renderLibraryCard(item, activeLibraryTab)).join('')}</div>`;
     els.libraryContent.querySelectorAll('[data-library-action]').forEach(button => button.addEventListener('click', () => handleLibraryAction(button.dataset.libraryAction, button.dataset.id, activeLibraryTab)));
   }
 
 function renderLibraryCard(item, type) {
     const date = formatDate(item.createdAt || item.updatedAt || item.completedAt); const title = item.title || item.name || item.quizTitle || 'Untitled';
-    const singular = { summaries: 'summary', exercises: 'exercise', templates: 'template', quizzes: 'quiz', attempts: 'attempt' }[type] || type;
+    const singular = { summaries: 'summary', exercises: 'exercise', templates: 'template', quizzes: 'quiz', flashcardSets: 'flashcard set', attempts: 'attempt' }[type] || type;
     let description = '';
     if (type === 'summaries') description = stripMarkdown(item.content || '');
     if (type === 'exercises') description = item.question || '';
     if (type === 'templates') description = item.text || '';
     if (type === 'quizzes') description = `${item.problems?.length || item.exercises?.length || 0} problems · randomized candidates · ${humanizeType(item.feedbackTiming || '')} feedback`;
+    if (type === 'flashcardSets') description = `${item.flashcards?.length || 0} cards · ${item.type === 'option' ? 'option completion' : 'Gemini-graded questions'}`;
     if (type === 'attempts') { const graded = item.graded ?? item.total; const ungradable = item.ungradable || 0; description = `Score: ${item.score}/${graded} graded${ungradable ? ` · ${ungradable} ungradable` : ''}${graded ? ` (${Math.round((item.score / graded) * 100)}%)` : ''}`; }
     return `<article class="library-card"><span class="meta-pill">${escapeHtml(singular)}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p><div class="library-card-footer"><span>${escapeHtml(date)}</span><div class="library-card-actions"><button data-library-action="open" data-id="${escapeAttr(item.id)}">Open</button><button data-library-action="export" data-id="${escapeAttr(item.id)}">Export</button><button data-library-action="delete" data-id="${escapeAttr(item.id)}">Delete</button></div></div></article>`;
   }
@@ -1587,6 +1955,11 @@ function openLibraryItem(item, type) {
       els.quizFeedbackDepth.value = item.feedbackDepth || 'correctness';
       els.quizShuffle.checked = Boolean(item.shuffle);
       saveState(); renderQuizBuilder(); navigateTo('quiz');
+    } else if (type === 'flashcardSets') {
+      state.currentFlashcardSet = clone(item);
+      els.flashcardTemplatePool.innerHTML = '';
+      renderFlashcardBuilder();
+      navigateTo('flashcards');
     } else if (type === 'attempts') toast('Attempt result', `${item.quizTitle}: ${item.score}/${item.graded ?? item.total} graded answers correct${item.ungradable ? `; ${item.ungradable} ungradable` : ''}.`, 'info');
   }
 
@@ -1604,7 +1977,7 @@ function bindSettingsControls() {
     els.importWorkspaceButton.addEventListener('click', () => els.workspaceImportFile.click());
     els.workspaceImportFile.addEventListener('change', event => importWorkspace(event.target.files?.[0]));
     els.settingsExportWorkspaceButton.addEventListener('click', exportWorkspace);
-    els.clearWorkspaceButton.addEventListener('click', () => confirmAction('Clear the entire workspace?', 'Saved summaries, exercises, templates, quizzes, attempts, and settings will be deleted from this browser.', () => {
+    els.clearWorkspaceButton.addEventListener('click', () => confirmAction('Clear the entire workspace?', 'Saved summaries, exercises, templates, quizzes, flashcard sets, attempts, and settings will be deleted from this browser.', () => {
       localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem(SESSION_KEY); state = createEmptyState(); applyStoredStateToUI(); renderAll(); toast('Workspace cleared', 'All local Study Forge data was removed.', 'success');
     }));
   }
@@ -1679,7 +2052,7 @@ function applyStoredStateToUI() {
   }
 
 function renderAll() {
-    renderSourceStatus(); renderApiStatus(); renderStats(); renderRecentWork(); renderQuizBuilder(); renderLibrary(); updateStorageIndicators();
+    renderSourceStatus(); renderApiStatus(); renderStats(); renderRecentWork(); renderQuizBuilder(); renderFlashcardBuilder(); renderLibrary(); updateStorageIndicators();
     if (state.currentSummary) renderSummaryOutput();
     if (state.currentExercise) {
       const tab = state.currentExercise.source === 'template' ? 'template' : state.currentExercise.source === 'direct' ? 'direct' : 'ai';
@@ -1698,15 +2071,15 @@ function renderApiStatus(forced) {
     els.settingsApiBadge.className = `status-badge ${connected ? 'connected' : 'disconnected'}`;
     els.settingsApiBadge.textContent = connected ? t('configured', state.settings.uiLanguage) : t('notConnected', state.settings.uiLanguage);
   }
-function renderStats() { els.summaryCount.textContent = state.summaries.length; els.exerciseCount.textContent = state.exercises.length; els.templateCount.textContent = state.templates.length; els.attemptCount.textContent = state.attempts.length; els.quizNavCount.textContent = state.quizDraft.length; }
+function renderStats() { els.summaryCount.textContent = state.summaries.length; els.exerciseCount.textContent = state.exercises.length; els.templateCount.textContent = state.templates.length; els.attemptCount.textContent = state.attempts.length; els.quizNavCount.textContent = state.quizDraft.length; els.flashcardSetCount.textContent = state.flashcardSets.length; els.flashcardNavCount.textContent = state.flashcardSets.length; }
 
 function renderRecentWork() {
-    const items = [...state.summaries.map(item => ({ ...item, _type: 'Summary', _date: item.createdAt })), ...state.exercises.map(item => ({ ...item, _type: 'Exercise', _date: item.createdAt })), ...state.templates.map(item => ({ ...item, _type: 'Template', _date: item.updatedAt }))].sort((a, b) => new Date(b._date) - new Date(a._date)).slice(0, 4);
+    const items = [...state.summaries.map(item => ({ ...item, _type: 'Summary', _date: item.createdAt })), ...state.exercises.map(item => ({ ...item, _type: 'Exercise', _date: item.createdAt })), ...state.templates.map(item => ({ ...item, _type: 'Template', _date: item.updatedAt })), ...state.flashcardSets.map(item => ({ ...item, _type: 'Flashcards', _date: item.updatedAt || item.createdAt }))].sort((a, b) => new Date(b._date) - new Date(a._date)).slice(0, 4);
     if (!items.length) { els.recentWork.className = 'empty-state compact'; els.recentWork.innerHTML = '<span>◇</span><strong>No saved work yet</strong><p>Your latest summaries, exercises, and templates will appear here.</p>'; return; }
     els.recentWork.className = 'quick-actions';
-    els.recentWork.innerHTML = items.map(item => `<button class="quick-action" data-recent-type="${item._type.toLowerCase()}" data-recent-id="${escapeAttr(item.id)}"><span class="quick-icon lavender">${item._type === 'Summary' ? '≡' : item._type === 'Exercise' ? '✦' : '▤'}</span><span><strong>${escapeHtml(item.title || item.name || truncate(item.question, 50))}</strong><small>${escapeHtml(item._type)} · ${escapeHtml(formatDate(item._date))}</small></span><b>→</b></button>`).join('');
+    els.recentWork.innerHTML = items.map(item => `<button class="quick-action" data-recent-type="${item._type.toLowerCase()}" data-recent-id="${escapeAttr(item.id)}"><span class="quick-icon lavender">${item._type === 'Summary' ? '≡' : item._type === 'Exercise' ? '✦' : item._type === 'Flashcards' ? '◇' : '▤'}</span><span><strong>${escapeHtml(item.title || item.name || truncate(item.question, 50))}</strong><small>${escapeHtml(item._type)} · ${escapeHtml(formatDate(item._date))}</small></span><b>→</b></button>`).join('');
     els.recentWork.querySelectorAll('[data-recent-id]').forEach(button => button.addEventListener('click', () => {
-      const mapping = { summary: 'summaries', exercise: 'exercises', template: 'templates' }; const type = mapping[button.dataset.recentType]; const item = state[type].find(entry => entry.id === button.dataset.recentId); if (item) openLibraryItem(item, type);
+      const mapping = { summary: 'summaries', exercise: 'exercises', template: 'templates', flashcards: 'flashcardSets' }; const type = mapping[button.dataset.recentType]; const item = state[type].find(entry => entry.id === button.dataset.recentId); if (item) openLibraryItem(item, type);
     }));
   }
 
@@ -1715,10 +2088,11 @@ function updateStorageIndicators() {
     els.storageLabel.textContent = label; els.settingsStorageSize.textContent = label; els.storageBar.style.width = `${Math.min(100, (bytes / (5 * 1024 * 1024)) * 100)}%`;
   }
 
-async function callGemini(prompt, jsonMode = false) {
+async function callGemini(prompt, jsonMode = false, options = {}) {
     return requestGemini({
       prompt,
       jsonMode,
+      maxOutputTokens: options.maxOutputTokens,
       apiKey: getApiKey(),
       model: state.settings.model || 'gemini-2.5-flash'
     });
@@ -1803,7 +2177,7 @@ function exportWorkspace() {
     const exported = clone(state);
     exported.settings.apiKey = '';
     downloadJson(`study-forge-workspace-${new Date().toISOString().slice(0, 10)}.json`, {
-      app: 'Study Forge', version: 5, exportedAt: new Date().toISOString(), data: exported
+      app: 'Study Forge', version: 6, exportedAt: new Date().toISOString(), data: exported
     });
     toast('Workspace exported', 'Your study data was saved without the Gemini API key.', 'success');
   }
@@ -1825,6 +2199,8 @@ async function importWorkspace(file) {
         exercises: Array.isArray(incoming.exercises) ? incoming.exercises.map(normalizeStoredExercise) : [],
         templates: Array.isArray(incoming.templates) ? incoming.templates : [],
         quizzes: Array.isArray(incoming.quizzes) ? incoming.quizzes : [],
+        flashcardSets: Array.isArray(incoming.flashcardSets) ? incoming.flashcardSets : [],
+        flashcardAttempts: Array.isArray(incoming.flashcardAttempts) ? incoming.flashcardAttempts : [],
         attempts: Array.isArray(incoming.attempts) ? incoming.attempts : [],
         quizDraft: []
       };
@@ -1856,6 +2232,18 @@ function bindModalControls() {
       if (quizSession.index >= quizSession.quiz.exercises.length - 1) finishQuiz();
       else { quizSession.index += 1; quizSession.awaitingNext = false; renderQuizPlayer(); }
     });
+    els.closeFlashcardModalButton.addEventListener('click', closeFlashcardModal);
+    els.flashcardPreviousButton.addEventListener('click', () => {
+      if (!flashcardSession) return;
+      getCurrentFlashcardAnswer();
+      if (flashcardSession.index > 0) { flashcardSession.index -= 1; flashcardSession.awaitingNext = Boolean(flashcardSession.responses[flashcardSession.index].result); renderFlashcardPlayer(); }
+    });
+    els.flashcardSubmitButton.addEventListener('click', submitFlashcardAnswer);
+    els.flashcardNextButton.addEventListener('click', () => {
+      if (!flashcardSession) return;
+      if (flashcardSession.completed) return closeFlashcardModal();
+      nextFlashcard();
+    });
     els.confirmCancelButton.addEventListener('click', closeConfirmModal);
     els.confirmAcceptButton.addEventListener('click', async () => {
       const action = pendingConfirmAction;
@@ -1864,9 +2252,11 @@ function bindModalControls() {
     });
     els.confirmModal.addEventListener('click', event => { if (event.target === els.confirmModal) closeConfirmModal(); });
     els.quizModal.addEventListener('click', event => { if (event.target === els.quizModal) closeQuizModal(); });
+    els.flashcardModal.addEventListener('click', event => { if (event.target === els.flashcardModal) closeFlashcardModal(); });
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
       if (!els.quizModal.classList.contains('hidden')) closeQuizModal();
+      if (!els.flashcardModal.classList.contains('hidden')) closeFlashcardModal();
       if (!els.confirmModal.classList.contains('hidden')) closeConfirmModal();
     });
   }

@@ -105,3 +105,8 @@ Semantic grading deliberately has no local fallback. When Gemini is unavailable 
 Semantic exercises can be stored in English or Romanian. The evaluation response is requested in the exercise language. Romanian generation and evaluation prompts explicitly require correct diacritics: `ă`, `â`, `î`, `ș`, and `ț`.
 
 A quiz may mix exercises in both languages because language is stored on each exercise rather than on the quiz blueprint.
+
+
+## Flashcard eligibility
+
+Every saved semantic template is eligible for the Flashcard Builder. Single-response templates contribute one authoritative source block. Semantic `multiple-tasks` templates contribute one source block per task. The builder instantiates the template first, resolves placeholders and seeded values, segments each reference answer into traceable phrase units, and asks Gemini to combine or split those units into active-recall cards. Private grading guidance is not shown to learners and is not required for flashcard generation.

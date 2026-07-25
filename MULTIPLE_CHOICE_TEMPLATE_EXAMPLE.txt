@@ -1,0 +1,34 @@
+What is {A} + {B}?
+
+## Metadata
+
+TITLE: Seeded multiple-choice addition
+SUBJECT: Mathematics
+TOPIC: Addition
+TYPE: multiple-choice
+DIFFICULTY: easy
+SEED: random
+LANGUAGE: en
+MAX_CONSTRAINT_ATTEMPTS: 1000
+
+## Definitions
+
+A: first addend (1..20)
+B: second addend (1..20)
+
+## Formula
+
+ANSWER = A + B
+
+## Choices
+
+CORRECT: ANSWER
+DISTRACTOR: ANSWER - 2
+DISTRACTOR: ANSWER + 1
+DISTRACTOR: ANSWER + 3
+SHUFFLE: true
+
+## Feedback
+
+HINT: Add the two highlighted values.
+EXPLANATION: {A} + {B} = {ANSWER}.
