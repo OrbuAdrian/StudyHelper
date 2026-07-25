@@ -42,7 +42,36 @@ The lists are semantic guidance, not mandatory literal keywords:
 - `acceptedExpressions` — known equivalent terminology or phrasing;
 - `knownIncorrectClaims` — common misconceptions relevant to the question.
 
-Gemini may still recognize ordinary paraphrases that are not explicitly listed.
+Gemini may still recognize ordinary paraphrases that are not explicitly listed. These guidance lists are author-side data and are not rendered on learner exercise cards.
+
+## Multiple semantic tasks
+
+One exercise may contain several independently graded stated-answer tasks. The learner-facing question contains the task prompts, while each item stores its own label, reference answer, strictness, and optional guidance.
+
+```text
+A) Question A?
+B) Question B?
+
+## Metadata
+TYPE: multiple-tasks
+LANGUAGE: en
+
+## Semantic Answers
+
+TASK_A:
+LABEL: A) Question A
+REFERENCE: |
+  Authoritative answer for task A.
+STRICTNESS: moderate
+
+TASK_B:
+LABEL: B) Question B
+REFERENCE: |
+  Authoritative answer for task B.
+STRICTNESS: strict
+```
+
+Study Forge renders one long-form field per task and sends each response to Gemini separately. The exercise is fully correct only when every gradable task is correct. If Gemini is unavailable, the semantic tasks are reported as ungradable rather than incorrect.
 
 ## Strictness levels
 

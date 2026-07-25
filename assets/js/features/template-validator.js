@@ -48,13 +48,18 @@ function runSemanticStaticChecks(parsed, issues) {
   const collectionFieldNames = new Set(parsed.collections.flatMap(item => item.fields?.map(field => field.name) || []));
   const localNames = new Set(['INDEX', 'INDEX0', 'ROW_INDEX', 'ROW_INDEX0', 'COLUMN_INDEX', 'COLUMN_INDEX0', 'VALUES', 'VALUE']);
   const knownVariables = new Set([...definitionNames, ...assignmentNames, ...mappedOutputNames, ...collectionNames, ...collectionFieldNames, ...localNames]);
+  const semanticSources = parsed.semanticMultipleTasks
+    ? parsed.semanticAnswers
+    : [parsed.semanticAnswer];
   const semanticText = [
     parsed.sections.question,
-    parsed.semanticAnswer?.REFERENCE,
-    parsed.semanticAnswer?.ESSENTIAL_CONCEPTS,
-    parsed.semanticAnswer?.SUPPORTING_CONCEPTS,
-    parsed.semanticAnswer?.ACCEPTED_EXPRESSIONS,
-    parsed.semanticAnswer?.KNOWN_INCORRECT_CLAIMS,
+    ...semanticSources.flatMap(source => [
+      source?.REFERENCE,
+      source?.ESSENTIAL_CONCEPTS,
+      source?.SUPPORTING_CONCEPTS,
+      source?.ACCEPTED_EXPRESSIONS,
+      source?.KNOWN_INCORRECT_CLAIMS
+    ]),
     parsed.feedback?.HINT,
     parsed.feedback?.SOLUTION,
     parsed.feedback?.EXPLANATION
@@ -128,11 +133,18 @@ function runSemanticStaticChecks(parsed, issues) {
     });
   });
 
-  const strictness = String(parsed.semanticAnswer?.STRICTNESS || 'moderate').trim().toLowerCase();
-  if (!['lenient', 'moderate', 'strict', 'exacting'].includes(strictness)) issues.push(issue(
-    'error',
-    'invalid-semantic-strictness',
-    'STRICTNESS must be lenient, moderate, strict, or exacting.'
+  semanticSources.forEach((source, index) => {
+    const strictness = String(source?.STRICTNESS || 'moderate').trim().toLowerCase();
+    if (!['lenient', 'moderate', 'strict', 'exacting'].includes(strictness)) issues.push(issue(
+      'error',
+      'invalid-semantic-strictness',
+      `${source?.LABEL || source?.ID || `Semantic task ${index + 1}`}: STRICTNESS must be lenient, moderate, strict, or exacting.`
+    ));
+  });
+  if (parsed.semanticMultipleTasks && parsed.metadata.TYPE !== 'multiple-tasks') issues.push(issue(
+    'warning',
+    'semantic-multiple-tasks-type',
+    'Templates with ## Semantic Answers should use TYPE: multiple-tasks for clear learner-facing terminology.'
   ));
 }
 
@@ -421,6 +433,25 @@ function validateChoiceExpressions(parsed, available, knownQuestionVariables, is
   });
 }
 
+function validateGeneratedMultipleChoice(instance) {
+  const options = Array.isArray(instance.options) ? instance.options.map(value => String(value).trim()) : [];
+  if (options.length < 2) throw new Error('A multiple-choice instance must contain at least two options.');
+  if (options.some(option => !option)) throw new Error('Multiple-choice options cannot be empty.');
+  const normalized = options.map(option => option.toLocaleLowerCase());
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error('A multiple-choice instance generated duplicate options.');
+  }
+  const correct = String(instance.correctChoice ?? instance.answer ?? '').trim();
+  if (!correct) throw new Error('A multiple-choice instance did not produce a correct option.');
+  const occurrences = normalized.filter(option => option === correct.toLocaleLowerCase()).length;
+  if (occurrences !== 1) {
+    throw new Error(`The generated correct option must occur exactly once; found ${occurrences}.`);
+  }
+  if (String(instance.answer ?? '').trim() !== correct) {
+    throw new Error('The generated answer and correct choice do not match.');
+  }
+}
+
 function runCollectionStaticChecks(parsed, issues, initialAvailable) {
   const available = new Set(initialAvailable);
   const isGeneratedSizeRule = expression => {
@@ -470,6 +501,7 @@ function runTrialChecks(parsed, runs, issues) {
   for (let index = 0; index < runs; index += 1) {
     try {
       const instance = instantiateParsedTemplate(parsed, { seed: index + 1 });
+      if (parsed.multipleChoice) validateGeneratedMultipleChoice(instance);
       successes += 1;
       answers.push(instance.correctValue ?? instance.answer);
       attemptCounts.push(instance.attempt);
@@ -541,6 +573,7 @@ function runSeedChecks(parsed, issues) {
     const second = instantiateParsedTemplate(parsed, { seed, random: createSeededRandom(seed) });
     if (first.question !== second.question
       || first.answer !== second.answer
+      || first.correctChoice !== second.correctChoice
       || JSON.stringify(first.options || []) !== JSON.stringify(second.options || [])
       || first.attempt !== second.attempt) {
       issues.push(issue('error', 'seed-not-reproducible', 'The same seed did not reproduce the same generated exercise.'));

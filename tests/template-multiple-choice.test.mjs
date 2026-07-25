@@ -44,3 +44,29 @@ assert.equal(duplicateReport.valid, false);
 assert.match(duplicateReport.issues.map(item => item.message).join('\n'), /distinct/i);
 
 console.log('Multiple-choice template tests passed.');
+
+const unknownChoiceVariable = `Choose the result.
+
+## Metadata
+TYPE: multiple-choice
+
+## Choices
+CORRECT: MISSING_RESULT
+DISTRACTOR: 1
+SHUFFLE: false`;
+const unknownChoiceReport = validateTemplate(unknownChoiceVariable, { runs: 2 });
+assert.equal(unknownChoiceReport.valid, false);
+assert.match(unknownChoiceReport.issues.map(item => item.message).join('\n'), /unknown variable MISSING_RESULT/i);
+
+const invalidShuffle = `What is 2 + 2?
+
+## Metadata
+TYPE: multiple-choice
+
+## Choices
+CORRECT: 4
+DISTRACTOR: 3
+SHUFFLE: sometimes`;
+const invalidShuffleReport = validateTemplate(invalidShuffle, { runs: 1 });
+assert.equal(invalidShuffleReport.valid, false);
+assert.match(invalidShuffleReport.issues.map(item => item.message).join('\n'), /SHUFFLE must be true or false/i);

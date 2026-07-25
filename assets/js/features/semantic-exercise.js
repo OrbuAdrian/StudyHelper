@@ -15,7 +15,12 @@ export function isSemanticExercise(exercise) {
       || exercise.type === 'semantic'
       || exercise.type === 'valid-statement'
       || exercise.type === 'stated-answer'
-      || exercise.answerConfig?.equivalence === 'semantic')
+      || exercise.answerConfig?.equivalence === 'semantic'
+      || (Array.isArray(exercise.answerItems) && exercise.answerItems.some(item =>
+        item?.validationKind === 'semantic'
+        || item?.answerConfig?.equivalence === 'semantic'
+        || Boolean(item?.semanticConfig)
+      )))
   );
 }
 

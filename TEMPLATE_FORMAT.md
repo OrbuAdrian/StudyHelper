@@ -21,13 +21,14 @@ Learner-facing exercise text
 ## Answers
 ## Repeated Answers
 ## Semantic Answer
+## Semantic Answers
 ## Choices
 ## Feedback
 ```
 
 A single-answer or multiple-tasks deterministic template needs either `## Definitions` or `## Collections`, plus either `## Formula` or `## Repeated Answers`. A multiple-choice template needs `TYPE: multiple-choice` and `## Choices`; definitions and formulas are optional for fixed questions.
 
-A semantic template needs learner-facing text, semantic `TYPE` metadata, and `## Semantic Answer`. Definitions, mappings, collections, formulas, and constraints are optional.
+A single-response semantic template needs learner-facing text and `## Semantic Answer`. A semantic exercise with several separately graded stated-answer tasks uses `TYPE: multiple-tasks` and `## Semantic Answers`. Definitions, mappings, collections, formulas, and constraints are optional.
 
 ## Learner-facing text
 
@@ -101,7 +102,7 @@ reasoning
 phrase-completion
 ```
 
-`multiple-tasks` means one exercise contains several separately graded free-response tasks. `multiple-choice` means the learner selects exactly one correct option. The legacy value `multiple-answer` is read only for backward compatibility and is normalized to `multiple-tasks`.
+`multiple-tasks` means one exercise contains several separately graded tasks. Those tasks may be deterministic numeric responses or separate semantic/stated answers. `multiple-choice` means the learner selects exactly one correct option. The legacy value `multiple-answer` is read only for backward compatibility and is normalized to `multiple-tasks`.
 
 ## Multiline values
 
@@ -458,6 +459,7 @@ STRICTNESS: moderate
 Supported terms:
 
 ```text
+LABEL:
 REFERENCE:
 STRICTNESS:
 ESSENTIAL_CONCEPTS:
@@ -466,9 +468,39 @@ ACCEPTED_EXPRESSIONS:
 KNOWN_INCORRECT_CLAIMS:
 ```
 
-`STRICTNESS` accepts `lenient`, `moderate`, `strict`, or `exacting`.
+`STRICTNESS` accepts `lenient`, `moderate`, `strict`, or `exacting`. The concept, expression, and incorrect-claim lists are private grading guidance. They are sent to Gemini but are not displayed to the learner before answering.
 
-Semantic templates can use collections and dynamic question directives. Their reference answers and feedback can also contain scalar placeholders, loops, conditions, and matrix directives. Gemini is required only when grading a learner answer; without Gemini the attempt is ungradable.
+For several semantic tasks, write all learner questions in the question body and define one reference block per task:
+
+```text
+A) Cum influențează asociativitatea rata de hit?
+B) Ce compromis hardware introduce o asociativitate mai mare?
+
+## Metadata
+TYPE: multiple-tasks
+LANGUAGE: ro
+
+## Semantic Answers
+
+TASK_A:
+LABEL: A) Influența asupra ratei de hit
+REFERENCE: |
+  O asociativitate mai mare reduce ratările de conflict și crește, în general, rata de hit.
+STRICTNESS: moderate
+ESSENTIAL_CONCEPTS:
+  - reduce ratările de conflict
+  - crește rata de hit
+
+TASK_B:
+LABEL: B) Compromisul hardware
+REFERENCE: |
+  O asociativitate mai mare necesită mai multe comparatoare și logică de selecție, ceea ce crește costul și poate mări timpul de acces.
+STRICTNESS: strict
+```
+
+Each task identifier must be unique, each task needs `REFERENCE:`, and at least two tasks are required in `## Semantic Answers`. The generated exercise displays one long-form response field per task. Gemini grades each field independently; if Gemini is unavailable, the semantic tasks are ungradable rather than incorrect.
+
+Semantic templates can use collections and dynamic question directives. Their reference answers and feedback can also contain scalar placeholders, loops, conditions, and matrix directives.
 
 ## Multiple-choice exercises
 
@@ -503,7 +535,7 @@ Choice entries may be:
 - a number such as `4`;
 - quoted or ordinary text such as `"None of the above"`.
 
-All generated options must be distinct. If randomized values temporarily produce duplicate choices, Study Forge retries generation up to `MAX_CONSTRAINT_ATTEMPTS`. The correct option and the shuffled display order are both reproducible from the exercise seed. Multiple-choice templates do not use `## Answers` or `## Repeated Answers`.
+The validator checks that exactly one correct entry and at least one distractor exist, all referenced variables are known, `SHUFFLE` is valid, every generated option is non-empty and distinct, the correct option appears exactly once, and seeded option order is reproducible. If randomized values temporarily produce duplicate choices, Study Forge retries generation up to `MAX_CONSTRAINT_ATTEMPTS`. Multiple-choice templates do not use `## Answers`, `## Repeated Answers`, or semantic-answer sections.
 
 ## Feedback
 

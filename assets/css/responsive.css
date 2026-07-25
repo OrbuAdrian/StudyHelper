@@ -230,7 +230,4 @@
     min-width: 5.8rem;
   }
 
-  .semantic-guidance > div {
-    grid-template-columns: 1fr;
-  }
 }

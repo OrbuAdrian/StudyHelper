@@ -76,3 +76,55 @@ assert.equal(randomA.seed, 42);
 assert.equal(randomA.semanticConfig.strictness, 'strict');
 
 console.log('Semantic template tests passed.');
+
+const semanticMultipleTasks = `Răspundeți separat la ambele cerințe.
+
+A) Cum influențează asociativitatea rata de hit?
+B) Ce compromis hardware introduce o asociativitate mai mare?
+
+## Metadata
+TITLE: Asociativitatea cache-ului — două sarcini
+TYPE: multiple-tasks
+LANGUAGE: ro
+
+## Semantic Answers
+
+TASK_A:
+LABEL: A) Influența asupra ratei de hit
+REFERENCE: |
+  O asociativitate mai mare reduce ratările de conflict și crește, în general, rata de hit.
+STRICTNESS: moderate
+ESSENTIAL_CONCEPTS:
+  - reduce ratările de conflict
+  - crește rata de hit
+
+TASK_B:
+LABEL: B) Compromisul hardware
+REFERENCE: |
+  O asociativitate mai mare necesită mai multe comparatoare și logică de selecție, ceea ce crește costul și poate mări timpul de acces.
+STRICTNESS: strict
+KNOWN_INCORRECT_CLAIMS:
+  - Asociativitatea mai mare nu are niciun cost hardware.
+
+## Feedback
+HINT: Răspundeți separat la A și B.`;
+
+const multiParsed = parseTemplate(semanticMultipleTasks);
+assert.equal(multiParsed.semantic, true);
+assert.equal(multiParsed.semanticMultipleTasks, true);
+assert.equal(multiParsed.semanticAnswers.length, 2);
+assert.equal(multiParsed.answerConfigs.length, 2);
+assert.deepEqual(multiParsed.answerConfigs[0].essentialConcepts, ['reduce ratările de conflict', 'crește rata de hit']);
+
+const multiInstance = instantiateTemplate(semanticMultipleTasks, { seed: 77 });
+assert.equal(multiInstance.kind, 'semantic');
+assert.equal(multiInstance.semanticMultipleTasks, true);
+assert.equal(multiInstance.answers.length, 2);
+assert.equal(multiInstance.answers[0].validationKind, 'semantic');
+assert.equal(multiInstance.answers[1].semanticConfig.strictness, 'strict');
+assert.match(multiInstance.answers[0].answer, /ratările de conflict/);
+assert.match(multiInstance.answers[1].answer, /comparatoare/);
+
+const multiReport = validateTemplate(semanticMultipleTasks, { runs: 5 });
+assert.equal(multiReport.valid, true, multiReport.issues.map(item => item.message).join('\n'));
+assert.equal(multiReport.trials.successes, 5);

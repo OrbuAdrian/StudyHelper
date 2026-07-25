@@ -45,11 +45,11 @@ Defines the semantic exercise contract and prompt construction. It handles:
 - semantic evaluation prompts;
 - structured Gemini result normalization.
 
-The authoritative reference answer is always retained in `semanticConfig.referenceAnswer`. Semantic evaluation has no local fallback.
+The authoritative reference answer is always retained in `semanticConfig.referenceAnswer`. Semantic multiple-tasks additionally retain one semantic configuration per `answerItems` entry. Grading guidance is never rendered on learner cards. Semantic evaluation has no local fallback.
 
 ### `assets/js/features/template-engine.js`
 
-Parses Template Format v2 while remaining compatible with v1.1 and the original compact format. It handles deterministic and semantic templates, scalar values, seeded matrices and lists, repeated and conditional plain-text rendering, multiline values, collection-aware formulas, constraints, single-answer and multiple-tasks configurations, template-generated multiple-choice options, semantic reference answers, dependency tracing, highlighted values, and calculation traces.
+Parses Template Format v2 while remaining compatible with v1.1 and the original compact format. It handles deterministic and semantic templates, scalar values, seeded matrices and lists, repeated and conditional plain-text rendering, multiline values, collection-aware formulas, constraints, single-answer and multiple-tasks configurations, template-generated multiple-choice options, single or multiple semantic reference answers, dependency tracing, highlighted values, and calculation traces.
 
 ### `assets/js/features/template-validator.js`
 
@@ -102,7 +102,7 @@ The generated exercise records `sourceTemplateId`, `sourceTemplateName`, and `te
 
 ## Semantic template path
 
-A semantic template is identified by a semantic `TYPE` or by the presence of `## Semantic Answer`. It can omit `## Definitions` and `## Formula`. Exercise Lab performs a structural instantiation check, creates a normal semantic exercise instance, and defers learner-answer grading to Gemini. This path does not require numeric randomized validation.
+A semantic template is identified by a semantic `TYPE`, `## Semantic Answer`, or `## Semantic Answers`. A single semantic response uses `## Semantic Answer`; semantic multiple-tasks use `TYPE: multiple-tasks` and one task block per response under `## Semantic Answers`. These templates can omit `## Definitions` and `## Formula`. Exercise Lab creates one long-form response control per semantic task and defers each task evaluation to Gemini. This path does not require numeric randomized validation.
 
 ## Semantic exercise data model
 
@@ -185,4 +185,4 @@ CSS is loaded in dependency order:
 
 Template-generated choice questions use `TYPE: multiple-choice` and `## Choices`. The template engine resolves the correct expression and distractor expressions after definitions, mappings, collections, formulas, and constraints. It rejects duplicate concrete options and shuffles valid options with the same seeded random stream used for the exercise instance.
 
-Exercises with several independently graded free-response fields use the public type name `multiple-tasks`. Legacy `multiple-answer` and `multi-answer` values are normalized during parsing and state loading so older browser data remains usable.
+Exercises with several independently graded fields use the public type name `multiple-tasks`. Fields may be deterministic or semantic; semantic task items carry their own reference answer, strictness, and private guidance. Legacy `multiple-answer` and `multi-answer` values are normalized during parsing and state loading so older browser data remains usable.

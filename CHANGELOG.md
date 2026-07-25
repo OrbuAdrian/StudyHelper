@@ -1,5 +1,14 @@
 # Changelog
 
+## Semantic multiple-tasks and grading privacy
+
+- Added `## Semantic Answers` with separately labeled task blocks, reference answers, strictness settings, and optional guidance.
+- Added one long-form learner response field per semantic task.
+- Added independent Gemini evaluation for each semantic task and ungradable handling when Gemini is unavailable.
+- Removed grading-guidance lists from learner-facing exercise cards; they remain private inputs to semantic evaluation.
+- Made the current API-key field available immediately to semantic grading, even before a separate page refresh.
+- Hardened multiple-choice validation across static checks, randomized instances, correct-option uniqueness, and seed reproducibility.
+
 ## Multiple-choice templates and multiple-tasks terminology
 
 - Added working `TYPE: multiple-choice` template support through `## Choices`.

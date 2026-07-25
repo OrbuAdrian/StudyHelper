@@ -1171,39 +1171,6 @@
   background: var(--amber-soft);
 }
 
-.semantic-guidance {
-  margin: 0.8rem 0 1rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-
-.semantic-guidance summary {
-  cursor: pointer;
-  padding: 0.8rem 0.95rem;
-  font-weight: 700;
-}
-
-.semantic-guidance > div {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 0.8rem;
-  padding: 0 0.95rem 0.95rem;
-}
-
-.semantic-guidance section {
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.semantic-guidance ul {
-  margin: 0.55rem 0 0;
-  padding-left: 1.1rem;
-  color: var(--muted);
-}
-
 .answer-feedback.ungradable {
   color: var(--amber);
   background: var(--amber-soft);
@@ -1236,4 +1203,9 @@
 .trace-answer-list {
   display:grid;
   gap:8px
+}
+
+.multiple-task-field > .textarea {
+  min-height: 110px;
+  resize: vertical;
 }

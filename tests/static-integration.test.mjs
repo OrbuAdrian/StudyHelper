@@ -49,4 +49,7 @@ assert.doesNotMatch(html, /reserved for multiple-choice template expansion/i);
 assert.doesNotMatch(app, /data-action=\"quiz\"/);
 assert.match(html, /choose one or more saved templates/);
 assert.match(html, /## Semantic Answer/);
+assert.match(html, /## Semantic Answers/);
+assert.doesNotMatch(app, /Generated grading guidance/);
+assert.match(app, /semanticConfig:\s*semanticTask/);
 console.log('Static integration tests passed.');

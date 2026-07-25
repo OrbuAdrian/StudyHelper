@@ -170,9 +170,27 @@ function normalizeStoredExercise(exercise) {
   if (!exercise || typeof exercise !== 'object') return exercise;
   const semantic = isSemanticExercise(exercise);
   const type = normalizeExerciseType(exercise.type, exercise.answerItems);
+  const answerItems = Array.isArray(exercise.answerItems)
+    ? exercise.answerItems.map(item => {
+        const itemSemantic = item?.validationKind === 'semantic'
+          || item?.answerConfig?.equivalence === 'semantic'
+          || Boolean(item?.semanticConfig);
+        return {
+          ...item,
+          validationKind: itemSemantic ? 'semantic' : (item.validationKind || 'deterministic'),
+          semanticConfig: itemSemantic
+            ? normalizeSemanticConfig(item.semanticConfig || {
+                strictness: item.answerConfig?.strictness || 'moderate',
+                referenceAnswer: item.answer
+              }, item.answer)
+            : item.semanticConfig
+        };
+      })
+    : exercise.answerItems;
   return {
     ...exercise,
     type,
+    answerItems,
     language: ['en', 'ro'].includes(exercise.language) ? exercise.language : 'en',
     validationKind: semantic ? 'semantic' : (exercise.validationKind || 'deterministic'),
     semanticConfig: semantic
@@ -572,7 +590,7 @@ function normalizeGeneratedExercise(raw, defaults = {}) {
 
 function buildExerciseFromTemplateResult(result, template = {}) {
     const semantic = result.kind === 'semantic' || result.validationKind === 'semantic';
-    const taskItems = !semantic && Array.isArray(result.answers) && result.answers.length > 1
+    const taskItems = Array.isArray(result.answers) && result.answers.length > 1
       ? result.answers.map(item => ({
         id: item.id,
         label: item.label,
@@ -580,12 +598,21 @@ function buildExerciseFromTemplateResult(result, template = {}) {
         rawAnswer: item.rawAnswer ?? item.answer,
         answerUnit: item.answerUnit,
         answerConfig: item.answerConfig,
-        acceptedAnswers: item.acceptedAnswers || []
+        acceptedAnswers: item.acceptedAnswers || [],
+        validationKind: item.validationKind || (semantic ? 'semantic' : 'deterministic'),
+        semanticConfig: semantic
+          ? normalizeSemanticConfig(item.semanticConfig || {
+              strictness: item.answerConfig?.strictness,
+              referenceAnswer: item.answer
+            }, item.answer)
+          : null
       }))
       : [];
     const resolvedType = result.options?.length
       ? 'multiple-choice'
-      : normalizeExerciseType(result.metadata.TYPE || (semantic ? 'semantic' : 'single-answer'), taskItems);
+      : taskItems.length > 1
+        ? 'multiple-tasks'
+        : normalizeExerciseType(result.metadata.TYPE || (semantic ? 'semantic' : 'single-answer'), taskItems);
     return {
       id: uid(),
       type: resolvedType,
@@ -699,8 +726,12 @@ function validateCurrentTemplate({ silent = false } = {}) {
   }
 
 function renderSemanticTemplateValidation(instance) {
+    const taskCount = Array.isArray(instance.answers) && instance.answers.length > 1 ? instance.answers.length : 1;
+    const strictness = taskCount > 1
+      ? instance.answers.map(item => item.semanticConfig?.strictness || 'moderate').join(', ')
+      : (instance.semanticConfig?.strictness || 'moderate');
     els.templateValidationResult.className = 'template-validation-result success';
-    els.templateValidationResult.innerHTML = `<div class="validation-header"><div><span class="validation-status-dot"></span><strong>Semantic template is ready</strong><p>Structural check passed · numeric answer validation not required</p></div><span class="validation-run-badge">Semantic</span></div><div class="validation-stats"><div><span>Language</span><strong>${escapeHtml(instance.metadata.LANGUAGE || state.settings.contentLanguage || 'en')}</strong></div><div><span>Strictness</span><strong>${escapeHtml(instance.semanticConfig?.strictness || 'moderate')}</strong></div><div><span>Generated seed</span><strong>${escapeHtml(instance.seed)}</strong></div></div><div class="validation-empty"><span>✓</span><p>The question and authoritative reference answer can be instantiated successfully.</p></div>`;
+    els.templateValidationResult.innerHTML = `<div class="validation-header"><div><span class="validation-status-dot"></span><strong>Semantic template is ready</strong><p>Structural check passed · numeric answer validation not required</p></div><span class="validation-run-badge">Semantic${taskCount > 1 ? ` · ${taskCount} tasks` : ''}</span></div><div class="validation-stats"><div><span>Language</span><strong>${escapeHtml(instance.metadata.LANGUAGE || state.settings.contentLanguage || 'en')}</strong></div><div><span>Strictness</span><strong>${escapeHtml(strictness)}</strong></div><div><span>Generated seed</span><strong>${escapeHtml(instance.seed)}</strong></div></div><div class="validation-empty"><span>✓</span><p>The question and ${taskCount > 1 ? `${taskCount} authoritative reference answers` : 'authoritative reference answer'} can be instantiated successfully.</p></div>`;
   }
 
 function renderTemplateValidation(report) {
@@ -908,7 +939,19 @@ function renderAnswerInputs(exercise, { radioName = 'answer', savedAnswer = '' }
   }
   if (hasMultipleTasks(exercise)) {
     const saved = savedAnswer && typeof savedAnswer === 'object' ? savedAnswer : {};
-    return `<div class="multiple-tasks-list">${exercise.answerItems.map((item, index) => `<label class="multiple-task-field"><span>${escapeHtml(item.label || `Task ${index + 1}`)}</span><input class="input" data-role="answer-input" data-answer-id="${escapeAttr(item.id)}" value="${escapeAttr(saved[item.id] || '')}" placeholder="Enter task answer${item.answerUnit ? ` in ${escapeAttr(item.answerUnit)}` : ''}"></label>`).join('')}</div>`;
+    return `<div class="multiple-tasks-list">${exercise.answerItems.map((item, index) => {
+      const semanticTask = item.validationKind === 'semantic'
+        || item.answerConfig?.equivalence === 'semantic'
+        || Boolean(item.semanticConfig);
+      const label = escapeHtml(item.label || `Task ${index + 1}`);
+      const placeholder = semanticTask
+        ? 'Write the most valid answer you can…'
+        : `Enter task answer${item.answerUnit ? ` in ${item.answerUnit}` : ''}`;
+      const control = semanticTask
+        ? `<textarea class="textarea" data-role="answer-input" data-answer-id="${escapeAttr(item.id)}" placeholder="${escapeAttr(placeholder)}">${escapeHtml(saved[item.id] || '')}</textarea>`
+        : `<input class="input" data-role="answer-input" data-answer-id="${escapeAttr(item.id)}" value="${escapeAttr(saved[item.id] || '')}" placeholder="${escapeAttr(placeholder)}">`;
+      return `<label class="multiple-task-field"><span>${label}</span>${control}</label>`;
+    }).join('')}</div>`;
   }
   return `<textarea class="textarea" data-role="answer-input" placeholder="${isSemanticExercise(exercise) ? 'Write the most valid answer you can…' : 'Enter your answer…'}">${escapeHtml(typeof savedAnswer === 'string' ? savedAnswer : '')}</textarea>`;
 }
@@ -940,14 +983,13 @@ function renderExerciseCard(exercise, host) {
     const seedPill = exercise.templateSeed === undefined ? '' : `<span class="meta-pill">Seed ${escapeHtml(exercise.templateSeed)}</span>`;
     const languagePill = `<span class="meta-pill">${escapeHtml(getLanguageName(exercise.language || 'en', state.settings.uiLanguage || 'en'))}</span>`;
     const semanticPill = semantic
-      ? `<span class="meta-pill semantic-pill">${escapeHtml(exercise.semanticConfig?.strictness || 'moderate')} semantic</span>`
+      ? `<span class="meta-pill semantic-pill">${multipleTasks ? `${exercise.answerItems.length} semantic tasks` : `${escapeHtml(exercise.semanticConfig?.strictness || 'moderate')} semantic`}</span>`
       : '';
     const semanticNotice = semantic
-      ? `<div class="semantic-grading-notice ${getApiKey() ? 'ready' : 'unavailable'}"><span>${getApiKey() ? '◇' : '!'}</span><div><strong>Semantic evaluation</strong><p>${getApiKey() ? 'Gemini will compare the learner answer with the approved reference answer according to the selected strictness.' : 'Gemini is unavailable, so this exercise can be answered but cannot be graded.'}</p></div></div>`
+      ? `<div class="semantic-grading-notice ${getApiKey() ? 'ready' : 'unavailable'}"><span>${getApiKey() ? '◇' : '!'}</span><div><strong>Semantic evaluation</strong><p>${getApiKey() ? `Gemini is configured and will grade ${multipleTasks ? 'each task' : 'the learner answer'} against the approved reference ${multipleTasks ? 'answers' : 'answer'} and strictness settings.` : 'Gemini is unavailable, so this exercise can be answered but cannot be graded.'}</p></div></div>`
       : '';
-    const guidanceHtml = semantic ? renderSemanticGuidance(exercise.semanticConfig) : '';
 
-    wrapper.innerHTML = `<div class="exercise-meta"><span class="meta-pill">${escapeHtml(humanizeType(exercise.type))}</span><span class="meta-pill">${escapeHtml(exercise.difficulty)}</span><span class="meta-pill">${escapeHtml(exercise.source)}</span>${languagePill}${semanticPill}${seedPill}</div><div class="exercise-question">${renderExerciseQuestion(exercise)}</div>${valueLegend}${semanticNotice}${guidanceHtml}${variableHtml}<div class="answer-area">${optionHtml}<div class="answer-feedback hidden" data-role="feedback"></div><div class="exercise-actions"><button class="button primary" data-action="check">Check answer</button><button class="button secondary" data-action="hint">Hint</button><button class="button secondary" data-action="solution">Show solution</button>${traceAction}<button class="button ghost" data-action="save">Save</button><button class="button ghost" data-action="export">Export JSON</button></div><p class="exercise-template-note">Quiz problems now use saved templates directly and generate fresh values when the quiz starts.</p></div>`;
+    wrapper.innerHTML = `<div class="exercise-meta"><span class="meta-pill">${escapeHtml(humanizeType(exercise.type))}</span><span class="meta-pill">${escapeHtml(exercise.difficulty)}</span><span class="meta-pill">${escapeHtml(exercise.source)}</span>${languagePill}${semanticPill}${seedPill}</div><div class="exercise-question">${renderExerciseQuestion(exercise)}</div>${valueLegend}${semanticNotice}${variableHtml}<div class="answer-area">${optionHtml}<div class="answer-feedback hidden" data-role="feedback"></div><div class="exercise-actions"><button class="button primary" data-action="check">Check answer</button><button class="button secondary" data-action="hint">Hint</button><button class="button secondary" data-action="solution">Show solution</button>${traceAction}<button class="button ghost" data-action="save">Save</button><button class="button ghost" data-action="export">Export JSON</button></div><p class="exercise-template-note">Quiz problems now use saved templates directly and generate fresh values when the quiz starts.</p></div>`;
     host.appendChild(wrapper);
     wrapper.querySelector('[data-action="check"]').addEventListener('click', () => checkExerciseAnswer(exercise, wrapper));
     wrapper.querySelector('[data-action="hint"]').addEventListener('click', () => showExerciseFeedback(wrapper, 'neutral', exercise.hint || 'No hint was supplied for this exercise.'));
@@ -956,18 +998,6 @@ function renderExerciseCard(exercise, host) {
     wrapper.querySelector('[data-action="save"]').addEventListener('click', () => saveExercise(exercise));
     wrapper.querySelector('[data-action="export"]').addEventListener('click', () => downloadJson(`${slugify(exercise.sourceTitle || 'exercise')}.json`, exercise));
     scheduleInterfaceTranslation();
-  }
-
-function renderSemanticGuidance(config) {
-  if (!config) return '';
-  const groups = [
-    ['Essential concepts', config.essentialConcepts],
-    ['Supporting concepts', config.supportingConcepts],
-    ['Accepted expressions', config.acceptedExpressions],
-    ['Known incorrect claims', config.knownIncorrectClaims]
-  ].filter(([, values]) => Array.isArray(values) && values.length);
-  if (!groups.length) return '';
-  return `<details class="semantic-guidance"><summary>Generated grading guidance</summary><div>${groups.map(([label, values]) => `<section><strong>${escapeHtml(label)}</strong><ul>${values.map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul></section>`).join('')}</div></details>`;
   }
 
 function renderExerciseQuestion(exercise) {
@@ -1262,9 +1292,12 @@ function renderQuizPlayer() {
           ? 'correct'
           : 'incorrect';
     const semanticNotice = isSemanticExercise(exercise)
-      ? `<div class="semantic-grading-notice ${getApiKey() ? 'ready' : 'unavailable'}"><span>${getApiKey() ? '◇' : '!'}</span><div><strong>Semantic evaluation</strong><p>${getApiKey() ? 'Gemini evaluates this answer against its reference answer and strictness level.' : t('semanticRequiresGemini', language)}</p></div></div>`
+      ? `<div class="semantic-grading-notice ${getApiKey() ? 'ready' : 'unavailable'}"><span>${getApiKey() ? '◇' : '!'}</span><div><strong>Semantic evaluation</strong><p>${getApiKey() ? `Gemini is configured and evaluates ${hasMultipleTasks(exercise) ? 'each task' : 'this answer'} against the approved reference ${hasMultipleTasks(exercise) ? 'answers' : 'answer'} and strictness settings.` : t('semanticRequiresGemini', language)}</p></div></div>`
       : '';
-    els.quizPlayerBody.innerHTML = `<div class="exercise-meta"><span class="meta-pill">${escapeHtml(humanizeType(exercise.type))}</span><span class="meta-pill">${escapeHtml(exercise.difficulty)}</span><span class="meta-pill">${escapeHtml(getLanguageName(exercise.language || 'en', language))}</span>${isSemanticExercise(exercise) ? `<span class="meta-pill semantic-pill">${escapeHtml(exercise.semanticConfig?.strictness || 'moderate')} semantic</span>` : ''}</div><div class="exercise-question">${renderExerciseQuestion(exercise)}</div>${renderValueHighlightLegend(exercise)}${semanticNotice}${answersHtml}<div class="answer-feedback ${feedbackClass}" id="quizAnswerFeedback">${response.result ? escapeHtml(formatFeedbackForDepth(exercise, response.result, quiz.feedbackDepth)) : ''}</div>`;
+    const semanticQuizPill = isSemanticExercise(exercise)
+      ? `<span class="meta-pill semantic-pill">${hasMultipleTasks(exercise) ? `${exercise.answerItems.length} semantic tasks` : `${escapeHtml(exercise.semanticConfig?.strictness || 'moderate')} semantic`}</span>`
+      : '';
+    els.quizPlayerBody.innerHTML = `<div class="exercise-meta"><span class="meta-pill">${escapeHtml(humanizeType(exercise.type))}</span><span class="meta-pill">${escapeHtml(exercise.difficulty)}</span><span class="meta-pill">${escapeHtml(getLanguageName(exercise.language || 'en', language))}</span>${semanticQuizPill}</div><div class="exercise-question">${renderExerciseQuestion(exercise)}</div>${renderValueHighlightLegend(exercise)}${semanticNotice}${answersHtml}<div class="answer-feedback ${feedbackClass}" id="quizAnswerFeedback">${response.result ? escapeHtml(formatFeedbackForDepth(exercise, response.result, quiz.feedbackDepth)) : ''}</div>`;
     els.quizPreviousButton.disabled = index === 0;
     els.quizPreviousButton.classList.toggle('hidden', quiz.feedbackTiming === 'immediate' && quizSession.awaitingNext);
     els.quizSubmitButton.classList.toggle('hidden', quizSession.awaitingNext);
@@ -1391,15 +1424,25 @@ async function evaluateMultipleTasks(exercise, userAnswer) {
     for (let index = 0; index < exercise.answerItems.length; index += 1) {
       const item = exercise.answerItems[index];
       const provided = answers[item.id] || '';
+      const semanticTask = item.validationKind === 'semantic'
+        || item.answerConfig?.equivalence === 'semantic'
+        || Boolean(item.semanticConfig);
       const result = await evaluateSingleAnswer({
         ...exercise,
-        type: 'single-answer',
-        validationKind: 'deterministic',
+        type: semanticTask ? 'semantic' : 'single-answer',
+        validationKind: semanticTask ? 'semantic' : 'deterministic',
+        question: `${exercise.question}\n\nTask: ${item.label || `Task ${index + 1}`}`,
         answerItems: [],
         answer: item.answer,
         rawAnswer: item.rawAnswer,
         answerUnit: item.answerUnit,
         answerConfig: item.answerConfig || exercise.answerConfig,
+        semanticConfig: semanticTask
+          ? normalizeSemanticConfig(item.semanticConfig || {
+              strictness: item.answerConfig?.strictness,
+              referenceAnswer: item.answer
+            }, item.answer)
+          : null,
         acceptedAnswers: item.acceptedAnswers || []
       }, provided);
       parts.push({
@@ -1407,23 +1450,33 @@ async function evaluateMultipleTasks(exercise, userAnswer) {
         label: item.label || `Task ${index + 1}`,
         expected: item.answer,
         provided,
+        semantic: semanticTask,
         ...result
       });
     }
-    const correct = parts.filter(part => part.correct).length;
-    const total = parts.length;
+    const correct = parts.filter(part => part.gradable && part.correct).length;
+    const graded = parts.filter(part => part.gradable).length;
+    const ungradable = parts.length - graded;
     const missing = parts.filter(part => !part.provided).length;
+    const allGradable = ungradable === 0;
     return {
-      gradable: true,
-      correct: correct === total,
+      gradable: allGradable,
+      correct: allGradable ? correct === parts.length : null,
       score: correct,
-      total,
+      total: parts.length,
+      graded,
+      ungradable,
       missing,
       parts,
       method: 'multiple-tasks',
       message: [
-        `${correct} of ${total} tasks correct.`,
-        ...parts.map((part, index) => `${index + 1}. ${part.label}: ${part.correct ? 'Correct' : `Incorrect — expected ${part.expected}`}`)
+        `${correct} of ${graded} graded tasks correct${ungradable ? ` · ${ungradable} ungradable` : ''}.`,
+        ...parts.map((part, index) => {
+          if (!part.gradable) return `${index + 1}. ${part.label}: Ungradable — ${part.message}`;
+          if (part.correct) return `${index + 1}. ${part.label}: Correct`;
+          if (part.semantic) return `${index + 1}. ${part.label}: Needs revision — ${part.message}`;
+          return `${index + 1}. ${part.label}: Incorrect — expected ${part.expected}`;
+        })
       ].join('\n')
     };
   }
@@ -1672,7 +1725,8 @@ async function callGemini(prompt, jsonMode = false) {
   }
 
 function getApiKey() {
-    return (state.settings.apiKey || safeStorageGet(globalThis.sessionStorage, SESSION_KEY)).trim();
+    const inputValue = typeof els.apiKeyInput?.value === 'string' ? els.apiKeyInput.value.trim() : '';
+    return (inputValue || state.settings.apiKey || safeStorageGet(globalThis.sessionStorage, SESSION_KEY)).trim();
   }
 
 function ensureSource() {

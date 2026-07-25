@@ -7,7 +7,7 @@ Study Forge is a client-only study workspace built with HTML, CSS, and JavaScrip
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-multiple-choice
+cd study-forge-semantic-tasks
 python3 -m http.server 8080
 ```
 
@@ -33,8 +33,9 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Independent content-language selection for summaries and exercises.
 - Topic, pasted-text, TXT, and PDF study sources.
 - Gemini-generated summaries in English or Romanian.
-- Deterministic single-answer, multiple-tasks, and multiple-choice template exercises.
-- Semantic explanation, definition, comparison, reasoning, and phrase-completion exercises.
+- Deterministic single-answer and multiple-tasks template exercises.
+- Template-generated multiple-choice exercises with seeded option shuffling.
+- Semantic single-response and semantic multiple-tasks exercises for explanations, definitions, comparisons, reasoning, and phrase completion.
 - User-approved reference answers for semantic grading.
 - Lenient, moderate, strict, and exacting semantic validation.
 - Optional concept guidance entered manually or derived by Gemini from the reference answer.
@@ -73,7 +74,7 @@ Strictness controls how Gemini treats paraphrases, omissions, terminology, and i
 
 Semantic exercises have no keyword-only fallback. Without Gemini they are recorded as ungradable, and quiz percentages use only gradable problems.
 
-Semantic templates use `## Semantic Answer` and may omit `## Definitions` and `## Formula` when the question is fixed. They can be saved and instantiated from Exercise Lab after a structural check; randomized mathematical validation is not required. Gemini is needed only when the learner's answer is graded.
+Single-response semantic templates use `## Semantic Answer`. Semantic exercises with several separately graded stated-answer tasks use `TYPE: multiple-tasks` and `## Semantic Answers`. They may omit `## Definitions` and `## Formula` when the question is fixed. Grading guidance remains hidden from learners and is used only in the Gemini evaluation prompt. Randomized mathematical validation is not required.
 
 ## Gemini setup
 
@@ -91,6 +92,7 @@ The optional **Remember API key** setting stores the key in `localStorage`. With
 The Template Engine includes separate scalar and dynamic examples. A detailed reference is available in [`TEMPLATE_FORMAT.md`](TEMPLATE_FORMAT.md).
 
 The included [`MULTIPLE_CHOICE_TEMPLATE_EXAMPLE.txt`](MULTIPLE_CHOICE_TEMPLATE_EXAMPLE.txt) demonstrates generated distractors and seeded option shuffling.
+The included [`SEMANTIC_MULTIPLE_TASKS_TEMPLATE_EXAMPLE.txt`](SEMANTIC_MULTIPLE_TASKS_TEMPLATE_EXAMPLE.txt) demonstrates two independently graded Romanian stated-answer tasks with private grading guidance.
 
 Supported sections:
 
@@ -107,6 +109,7 @@ Question text with {PLACEHOLDERS}
 ## Answers
 ## Repeated Answers
 ## Semantic Answer
+## Semantic Answers
 ## Choices
 ## Feedback
 ```
@@ -168,7 +171,7 @@ node tests/static-integration.test.mjs
 ## Project structure
 
 ```text
-study-forge-multiple-choice/
+study-forge-semantic-tasks/
 ├── index.html
 ├── README.md
 ├── ARCHITECTURE.md

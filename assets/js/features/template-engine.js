@@ -18,7 +18,7 @@ const MULTIPLE_TASKS_TYPE = 'multiple-tasks';
 const LEGACY_MULTIPLE_TASK_TYPES = new Set(['multiple-answer', 'multi-answer']);
 const KNOWN_SECTIONS = new Set([
   'metadata', 'definitions', 'mappings', 'formula', 'constraints',
-  'answer', 'answers', 'repeated-answers', 'semantic-answer', 'choices',
+  'answer', 'answers', 'repeated-answers', 'semantic-answer', 'semantic-answers', 'choices',
   'collections', 'feedback'
 ]);
 
@@ -26,7 +26,11 @@ export function parseTemplate(templateText) {
   const sections = splitTemplateSections(templateText);
   const metadata = normalizeTemplateMetadata(parseKeyValueSection(sections.metadata));
   const semanticAnswer = parseSemanticAnswerSection(sections['semantic-answer']);
-  const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
+  const semanticAnswers = parseSemanticAnswersSection(sections['semantic-answers']);
+  const semantic = isSemanticTemplateMetadata(metadata)
+    || Boolean(sections['semantic-answer'])
+    || semanticAnswers.length > 0;
+  const semanticMultipleTasks = semanticAnswers.length > 0;
   const multipleChoice = metadata.TYPE === MULTIPLE_CHOICE_TYPE;
   const definitions = parseDefinitions(sections.definitions, {
     optional: semantic || multipleChoice || Boolean(sections.collections)
@@ -38,13 +42,18 @@ export function parseTemplate(templateText) {
   });
   const mappings = mergeMappings(explicitMappings, formula.mappings);
   const constraints = parseConstraints(sections.constraints);
+  const semanticAnswerConfigs = semanticMultipleTasks
+    ? semanticAnswers.map(createSemanticAnswerConfig)
+    : semantic
+      ? [createSemanticAnswerConfig(semanticAnswer)]
+      : [];
   const answerConfig = semantic
-    ? createSemanticAnswerConfig(semanticAnswer)
+    ? semanticAnswerConfigs[0]
     : multipleChoice
       ? createMultipleChoiceAnswerConfig()
       : parseAnswerSection(sections.answer, formula.assignments);
   const answerConfigs = semantic
-    ? [answerConfig]
+    ? semanticAnswerConfigs
     : multipleChoice
       ? []
     : (!sections.answers && !sections.answer && !formula.assignments.length && sections['repeated-answers'])
@@ -58,8 +67,17 @@ export function parseTemplate(templateText) {
   const seedSpec = parseSeedSpec(metadata.SEED);
   validateCollectionNamespaces(definitions, collections, mappings, formula.assignments);
 
-  if (semantic && !semanticAnswer.REFERENCE) {
+  if (sections['semantic-answer'] && sections['semantic-answers']) {
+    throw new Error('Use either ## Semantic Answer or ## Semantic Answers, not both.');
+  }
+  if (semantic && multipleChoice) {
+    throw new Error('A template cannot combine semantic answers with TYPE: multiple-choice.');
+  }
+  if (semantic && !semanticMultipleTasks && !semanticAnswer.REFERENCE) {
     throw new Error('Semantic templates need ## Semantic Answer with REFERENCE: text.');
+  }
+  if (semanticMultipleTasks && semanticAnswers.length < 2) {
+    throw new Error('## Semantic Answers must define at least two semantic tasks.');
   }
   if (multipleChoice && (sections.answers || sections['repeated-answers'])) {
     throw new Error('Multiple-choice templates use ## Choices, not ## Answers or ## Repeated Answers.');
@@ -83,12 +101,14 @@ export function parseTemplate(templateText) {
     answerConfigs,
     repeatedAnswerConfigs,
     semanticAnswer,
+    semanticAnswers,
+    semanticMultipleTasks,
     semantic,
     multipleChoice,
     feedback,
     choices,
     seedSpec,
-    answerVariable: multipleChoice ? choices.correctExpression : answerConfig.valueVariable
+    answerVariable: multipleChoice ? choices.correctExpression : (answerConfig?.valueVariable || '')
   };
 }
 
@@ -297,7 +317,10 @@ export function resolveAnswerDependencies(parsed, options = {}) {
   };
 
   if (parsed.semantic) {
-    extractPlaceholders(parsed.semanticAnswer?.REFERENCE || '').forEach(visit);
+    const semanticReferences = parsed.semanticMultipleTasks
+      ? parsed.semanticAnswers.map(item => item.REFERENCE || '')
+      : [parsed.semanticAnswer?.REFERENCE || ''];
+    semanticReferences.forEach(reference => extractPlaceholders(reference).forEach(visit));
     extractPlaceholders(parsed.sections.question || '').forEach(visit);
   } else if (parsed.multipleChoice) {
     const expressions = options.includeDistractors
@@ -436,7 +459,9 @@ function splitTemplateSections(text) {
   });
 
   const metadata = normalizeTemplateMetadata(parseKeyValueSection(sections.metadata));
-  const semantic = isSemanticTemplateMetadata(metadata) || Boolean(sections['semantic-answer']);
+  const semantic = isSemanticTemplateMetadata(metadata)
+    || Boolean(sections['semantic-answer'])
+    || Boolean(sections['semantic-answers']);
   const multipleChoice = metadata.TYPE === MULTIPLE_CHOICE_TYPE;
   if (!semantic && !multipleChoice) {
     if (!sections.definitions && !sections.collections) {
@@ -924,41 +949,94 @@ function normalizeAnswerConfig(values, valueVariable, fallback = {}) {
   };
 }
 
+const SEMANTIC_ANSWER_FIELDS = new Set([
+  'LABEL', 'REFERENCE', 'STRICTNESS', 'ESSENTIAL_CONCEPTS', 'SUPPORTING_CONCEPTS',
+  'ACCEPTED_EXPRESSIONS', 'KNOWN_INCORRECT_CLAIMS'
+]);
+const SEMANTIC_LIST_FIELDS = new Set([
+  'ESSENTIAL_CONCEPTS', 'SUPPORTING_CONCEPTS', 'ACCEPTED_EXPRESSIONS',
+  'KNOWN_INCORRECT_CLAIMS'
+]);
+
 function parseSemanticAnswerSection(text) {
   if (!String(text || '').trim()) return {};
-  const supported = new Set([
-    'REFERENCE', 'STRICTNESS', 'ESSENTIAL_CONCEPTS', 'SUPPORTING_CONCEPTS',
-    'ACCEPTED_EXPRESSIONS', 'KNOWN_INCORRECT_CLAIMS'
-  ]);
   const result = {};
   let currentKey = null;
   let blockMode = false;
   for (const rawLine of String(text).replace(/\r\n?/g, '\n').split('\n')) {
     const line = rawLine.trim();
     const match = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
-    if (match && supported.has(match[1].toUpperCase())) {
+    if (match && SEMANTIC_ANSWER_FIELDS.has(match[1].toUpperCase())) {
       currentKey = match[1].toUpperCase();
       blockMode = match[2].trim() === '|';
       result[currentKey] = blockMode ? '' : match[2].trim();
       continue;
     }
     if (!line || line.startsWith('//')) {
-      if (blockMode && currentKey && result[currentKey]) result[currentKey] += '\n';
+      if (blockMode && currentKey && result[currentKey] && !result[currentKey].endsWith('\n')) {
+        result[currentKey] += '\n';
+      }
       continue;
     }
     if (!currentKey) throw new Error(`Invalid Semantic Answer entry: “${line}”.`);
+    const separator = blockMode || SEMANTIC_LIST_FIELDS.has(currentKey) || /^[-*]\s+/.test(line)
+      ? '\n'
+      : ' ';
     result[currentKey] = result[currentKey]
-      ? `${result[currentKey]}${blockMode ? '\n' : ' '}${line}`
+      ? `${result[currentKey]}${separator}${line}`
       : line;
   }
   Object.keys(result).forEach(key => { result[key] = String(result[key]).trim(); });
   return result;
 }
 
+function parseSemanticAnswersSection(text) {
+  if (!String(text || '').trim()) return [];
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  const tasks = [];
+  let current = null;
+
+  const commit = () => {
+    if (!current) return;
+    const values = parseSemanticAnswerSection(current.lines.join('\n'));
+    if (!values.REFERENCE) {
+      throw new Error(`Semantic task ${current.id} needs REFERENCE: text.`);
+    }
+    tasks.push({
+      ...values,
+      ID: current.id,
+      LABEL: String(values.LABEL || current.id.replace(/_/g, ' ')).trim()
+    });
+    current = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const header = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*$/i);
+    if (header && !SEMANTIC_ANSWER_FIELDS.has(header[1].toUpperCase())) {
+      commit();
+      current = { id: header[1].toUpperCase(), lines: [] };
+      continue;
+    }
+    if (!current) {
+      if (!line || line.startsWith('//')) continue;
+      throw new Error('## Semantic Answers must start with a task identifier such as TASK_A:.');
+    }
+    current.lines.push(rawLine);
+  }
+  commit();
+
+  const ids = tasks.map(task => task.ID);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('Semantic task identifiers must be unique.');
+  }
+  return tasks;
+}
+
 function createSemanticAnswerConfig(values = {}) {
   return {
     valueVariable: '',
-    label: 'Reference answer',
+    label: String(values.LABEL || values.ID || 'Reference answer').trim(),
     type: 'semantic',
     unit: '',
     round: null,
@@ -991,7 +1069,10 @@ function createMultipleChoiceAnswerConfig() {
 
 function parseSemanticList(value) {
   if (!String(value || '').trim()) return [];
-  return String(value).split(/\s*;\s*|\s*\|\s*/).map(item => item.trim()).filter(Boolean);
+  return String(value)
+    .split(/\r?\n|\s*;\s*|\s*\|\s*/)
+    .map(item => item.trim().replace(/^[-*]\s+/, ''))
+    .filter(Boolean);
 }
 
 function normalizeStrictnessValue(value) {
@@ -1328,11 +1409,12 @@ function buildSemanticTemplateInstance({
   seed,
   attempt
 }) {
-  const requiredNames = new Set(extractPlaceholders(parsed.sections.question));
+  const dependencies = resolveAnswerDependencies(parsed);
+  const requiredNames = new Set(
+    parsed.definitions.map(definition => definition.name).filter(name => dependencies.has(name))
+  );
   const requiredCollections = new Set(
-    parsed.collections
-      .map(collection => collection.name)
-      .filter(name => templateUsesCollection(parsed.sections.question, name))
+    parsed.collections.map(collection => collection.name).filter(name => dependencies.has(name))
   );
   const questionSegments = renderQuestionSegments(
     parsed.sections.question,
@@ -1342,18 +1424,46 @@ function buildSemanticTemplateInstance({
     parsed.collections
   );
   const question = questionSegments.map(segment => segment.text).join('');
-  const referenceAnswer = renderTemplateText(parsed.semanticAnswer.REFERENCE, variables).trim();
-  if (!referenceAnswer) throw new Error('The semantic reference answer is empty after template generation.');
+  const sources = parsed.semanticMultipleTasks ? parsed.semanticAnswers : [parsed.semanticAnswer];
+  const semanticTasks = sources.map((source, index) => {
+    const referenceAnswer = renderTemplateText(source.REFERENCE, variables).trim();
+    if (!referenceAnswer) {
+      throw new Error(`Semantic task ${source.ID || index + 1} has an empty reference answer after template generation.`);
+    }
+    const semanticConfig = {
+      strictness: normalizeStrictnessValue(source.STRICTNESS),
+      referenceAnswer,
+      essentialConcepts: parseSemanticList(renderTemplateText(source.ESSENTIAL_CONCEPTS || '', variables)),
+      supportingConcepts: parseSemanticList(renderTemplateText(source.SUPPORTING_CONCEPTS || '', variables)),
+      acceptedExpressions: parseSemanticList(renderTemplateText(source.ACCEPTED_EXPRESSIONS || '', variables)),
+      knownIncorrectClaims: parseSemanticList(renderTemplateText(source.KNOWN_INCORRECT_CLAIMS || '', variables)),
+      conceptSource: 'manual'
+    };
+    const answerConfig = {
+      ...(parsed.answerConfigs[index] || createSemanticAnswerConfig(source)),
+      referenceAnswer,
+      strictness: semanticConfig.strictness,
+      essentialConcepts: [...semanticConfig.essentialConcepts],
+      supportingConcepts: [...semanticConfig.supportingConcepts],
+      acceptedExpressions: [...semanticConfig.acceptedExpressions],
+      knownIncorrectClaims: [...semanticConfig.knownIncorrectClaims]
+    };
+    return {
+      id: String(source.ID || `SEMANTIC_${index + 1}`),
+      valueVariable: '',
+      label: String(source.LABEL || answerConfig.label || `Task ${index + 1}`).trim(),
+      answer: referenceAnswer,
+      rawAnswer: referenceAnswer,
+      answerUnit: '',
+      formattedAnswer: referenceAnswer,
+      acceptedAnswers: [],
+      answerConfig,
+      semanticConfig,
+      validationKind: 'semantic'
+    };
+  });
+  const primaryTask = semanticTasks[0];
   const feedback = renderFeedback(parsed.feedback, variables);
-  const semanticConfig = {
-    strictness: normalizeStrictnessValue(parsed.semanticAnswer.STRICTNESS),
-    referenceAnswer,
-    essentialConcepts: parseSemanticList(renderTemplateText(parsed.semanticAnswer.ESSENTIAL_CONCEPTS || '', variables)),
-    supportingConcepts: parseSemanticList(renderTemplateText(parsed.semanticAnswer.SUPPORTING_CONCEPTS || '', variables)),
-    acceptedExpressions: parseSemanticList(renderTemplateText(parsed.semanticAnswer.ACCEPTED_EXPRESSIONS || '', variables)),
-    knownIncorrectClaims: parseSemanticList(renderTemplateText(parsed.semanticAnswer.KNOWN_INCORRECT_CLAIMS || '', variables)),
-    conceptSource: 'manual'
-  };
   const inputs = parsed.definitions.map(definition => ({
     name: definition.name,
     value: variables[definition.name],
@@ -1374,29 +1484,31 @@ function buildSemanticTemplateInstance({
       ...mapping,
       outputs: mapping.outputs.map(output => ({
         ...output,
-        required: requiredNames.has(output.name)
+        required: dependencies.has(output.name)
       }))
     })),
     assignments: assignmentTrace.map(step => ({
       ...step,
-      required: requiredNames.has(step.name)
+      required: dependencies.has(step.name)
     })),
     constraints: constraintTrace,
-    referenceAnswer
+    referenceAnswer: primaryTask.answer,
+    referenceAnswers: semanticTasks.map(task => ({ id: task.id, label: task.label, answer: task.answer }))
   };
   return {
     kind: 'semantic',
     validationKind: 'semantic',
     question,
     questionSegments,
-    answer: referenceAnswer,
-    formattedAnswer: referenceAnswer,
+    answer: primaryTask.answer,
+    formattedAnswer: primaryTask.answer,
     answerUnit: '',
     acceptedAnswers: [],
-    answers: [],
-    answerConfig: { ...parsed.answerConfig },
-    answerConfigs: [{ ...parsed.answerConfig }],
-    semanticConfig,
+    answers: semanticTasks,
+    answerConfig: { ...primaryTask.answerConfig },
+    answerConfigs: semanticTasks.map(task => ({ ...task.answerConfig })),
+    semanticConfig: { ...primaryTask.semanticConfig },
+    semanticMultipleTasks: semanticTasks.length > 1,
     variables,
     requiredInputs: [...requiredNames],
     requiredCollections: [...requiredCollections],
@@ -1405,7 +1517,7 @@ function buildSemanticTemplateInstance({
     attempt,
     metadata: { ...parsed.metadata },
     feedback,
-    explanation: feedback.solution || feedback.explanation || referenceAnswer
+    explanation: feedback.solution || feedback.explanation || primaryTask.answer
   };
 }
 
