@@ -1,13 +1,13 @@
 # Study Forge
 
-Study Forge is a client-only study workspace built with HTML, CSS, and JavaScript. It creates Gemini-assisted summaries and exercises, generates deterministic exercises from local templates, builds randomized multi-problem quizzes and Gemini-assisted flashcard sets, validates answers, and stores work in the browser.
+Study Forge is a client-only study workspace built with HTML, CSS, and JavaScript. It creates Gemini-assisted summaries and exercises, generates deterministic exercises from local templates, stores personal notes, builds randomized multi-problem quizzes and Gemini-assisted flashcard sets, validates answers, and stores work in the browser.
 
 ## Run locally
 
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-flashcard-professional
+cd study-forge-notes
 python3 -m http.server 8080
 ```
 
@@ -41,9 +41,11 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Semantic questions become ungradable—not incorrect—when Gemini is unavailable.
 - Template Format v2 with backward-compatible scalar templates plus dynamic matrices, grids, lists, conditional/repeated question blocks, multiline fields, collection formulas, repeated answer groups, seeded generation, highlighting, validation, and calculation traces.
 - Quiz blueprints with unlimited problem slots and independent saved-template candidate pools.
-- A Flashcard Builder that uses only saved semantic templates.
+- A Notes workspace with optional titles, English/Romanian content, editing, deletion, library storage, and JSON/workspace export.
+- A Flashcard Builder that uses saved semantic templates for question/option cards and saved notes for memo cards.
 - Question flashcards with Gemini-graded short answers.
-- Option flashcards with one blank, stored choices, local validation, context-safe acronym/expansion blanks, and varied correct-option positions.
+- Option flashcards with one blank, stored choices, local validation, context-safe acronym/expansion blanks, and per-review correct-option cycling.
+- Memo flashcards generated from the meaning of saved notes: complete questions, 3–5 selectable choices, local validation, and one or several cards according to note density.
 - Per-template enrichment generation that adds 1–3 relevant cards beyond facts already stated in the reference answers.
 - Gemini wording review that rewrites overly similar cues without changing answers or choices.
 - Flashcard-set JSON import, individual and bulk deletion, and an individual-card library.
@@ -93,14 +95,23 @@ Open **Settings**, paste a Gemini API key, select a model, and test the connecti
 - automatic semantic concept guidance;
 - semantic answer evaluation;
 - flashcard generation from semantic template reference answers;
+- memo-card generation from saved notes;
 - question-flashcard answer evaluation.
 
 The optional **Remember API key** setting stores the key in `localStorage`. Without it, the key remains in `sessionStorage` for the current browser session. A client-only application cannot fully protect a browser-visible key, so use a restricted key and avoid remembering it on shared devices.
 
 
+## Notes and memo cards
+
+The Notes workspace stores free-form text that the user wants to remember. A title is optional; content and language are stored with the note. Notes can be opened, edited, deleted, exported individually, or preserved through workspace export/import.
+
+Selecting **Memo flashcards** in Flashcard Builder switches the source pool from semantic templates to saved notes. Gemini interprets each note and creates one or more complete multiple-choice questions according to the amount of independently useful information. Memo cards contain 3–5 choices and are checked locally. Their answer positions cycle each time the set is reviewed.
+
+See [`NOTES.md`](NOTES.md) for the data model and generation behavior.
+
 ## Flashcard Builder
 
-The Flashcard Builder accepts only saved semantic templates. When a set is generated, Study Forge instantiates every selected template once so placeholders and seeded values are resolved, then sends each authoritative semantic reference answer to Gemini.
+The Flashcard Builder accepts saved semantic templates for question and option cards, and saved notes for memo cards. When a semantic set is generated, Study Forge instantiates every selected template once so placeholders and seeded values are resolved, then sends each authoritative semantic reference answer to Gemini.
 
 Gemini decides the pedagogical card boundaries rather than following a fixed one-sentence/one-card rule:
 
@@ -108,10 +119,11 @@ Gemini decides the pedagogical card boundaries rather than following a fixed one
 - a dense phrase may be split into several atomic cards;
 - unrelated templates are not combined merely to reduce card count.
 
-Two set types are available:
+Three set types are available:
 
 - **Question flashcards** rewrite source statements as direct questions with a short expected answer. Learner responses are semantically checked by Gemini against a private grading reference. Without Gemini, the card is answerable but ungradable.
 - **Option flashcards** rewrite source statements with exactly one `____` blank. Each card stores 3–5 distinct options and one correct option, so checking is local and does not require Gemini.
+- **Memo flashcards** are generated from the meaning of saved notes. They use complete questions rather than blanks, contain 3–5 choices, and are checked locally. Gemini may create one card for a short note or several cards for a denser note.
 
 Generated sets may be previewed, saved in the library, exported as TXT or JSON, and reviewed one card at a time. Every card stores source keys pointing back to the semantic template task blocks used to create it. Full semantic reference answers remain hidden during learner review. If generation fails, an author-side diagnostic panel shows parsed references, phrase units, API fallback attempts, raw responses, and any partially parsed cards. See [`FLASHCARDS.md`](FLASHCARDS.md).
 

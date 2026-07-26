@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="A client-side study workspace for summaries, exercises, quizzes, flashcards, and reusable exercise templates." />
+  <meta name="description" content="A client-side study workspace for notes, summaries, exercises, quizzes, flashcards, and reusable exercise templates." />
   <title>Study Forge</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -44,6 +44,7 @@
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span>Overview</button>
         <button class="nav-item" data-view="source"><span class="nav-icon">＋</span>Study source</button>
         <button class="nav-item" data-view="summary"><span class="nav-icon">≡</span>Summary</button>
+        <button class="nav-item" data-view="notes"><span class="nav-icon">✎</span>Notes <span class="nav-count" id="noteNavCount">0</span></button>
         <button class="nav-item" data-view="exercise"><span class="nav-icon">✦</span>Exercise lab</button>
         <button class="nav-item" data-view="quiz"><span class="nav-icon">✓</span>Quiz builder <span class="nav-count" id="quizNavCount">0</span></button>
         <button class="nav-item" data-view="flashcards"><span class="nav-icon">◇</span>Flashcard builder <span class="nav-count" id="flashcardNavCount">0</span></button>
@@ -102,6 +103,7 @@
             <article class="stat-card"><span class="stat-icon lavender">≡</span><div><strong id="summaryCount">0</strong><span>Saved summaries</span></div></article>
             <article class="stat-card"><span class="stat-icon mint">✦</span><div><strong id="exerciseCount">0</strong><span>Saved exercises</span></div></article>
             <article class="stat-card"><span class="stat-icon amber">▤</span><div><strong id="templateCount">0</strong><span>Templates</span></div></article>
+            <article class="stat-card"><span class="stat-icon mint">✎</span><div><strong id="noteCount">0</strong><span>Saved notes</span></div></article>
             <article class="stat-card"><span class="stat-icon coral">✓</span><div><strong id="attemptCount">0</strong><span>Quiz attempts</span></div></article>
             <article class="stat-card"><span class="stat-icon lavender">◇</span><div><strong id="flashcardSetCount">0</strong><span>Flashcard sets</span></div></article>
           </div>
@@ -112,8 +114,9 @@
               <div class="quick-actions">
                 <button class="quick-action" data-view-jump="summary"><span class="quick-icon lavender">≡</span><span><strong>Create a summary</strong><small>Compress a topic or source into structured notes.</small></span><b>→</b></button>
                 <button class="quick-action" data-view-jump="exercise"><span class="quick-icon mint">✦</span><span><strong>Generate an exercise</strong><small>Use Gemini, a direct prompt, or a reusable template.</small></span><b>→</b></button>
+                <button class="quick-action" data-view-jump="notes"><span class="quick-icon mint">✎</span><span><strong>Create a note</strong><small>Save anything you want to remember and turn it into memo cards.</small></span><b>→</b></button>
                 <button class="quick-action" data-view-jump="quiz"><span class="quick-icon coral">✓</span><span><strong>Build a quiz</strong><small>Select saved templates, generate fresh problem instances, and control feedback timing.</small></span><b>→</b></button>
-                <button class="quick-action" data-view-jump="flashcards"><span class="quick-icon lavender">◇</span><span><strong>Build flashcards</strong><small>Turn semantic reference answers into active-recall question or option cards.</small></span><b>→</b></button>
+                <button class="quick-action" data-view-jump="flashcards"><span class="quick-icon lavender">◇</span><span><strong>Build flashcards</strong><small>Turn semantic references or personal notes into question, option, or memo cards.</small></span><b>→</b></button>
               </div>
             </article>
             <article class="panel recent-panel">
@@ -159,6 +162,25 @@
               <div class="panel-heading"><div><span class="section-kicker">Generated result</span><h3 id="summaryOutputTitle">Your summary will appear here</h3></div><div class="output-actions hidden" id="summaryActions"><button class="icon-text-button" id="copySummaryButton">Copy</button><button class="icon-text-button" id="saveSummaryButton">Save</button><button class="icon-text-button" id="exportSummaryTxtButton">TXT</button><button class="icon-text-button" id="exportSummaryJsonButton">JSON</button></div></div>
               <div class="output-content empty-state" id="summaryOutput"><span>≡</span><strong>Ready when you are</strong><p>Add or select a study source, configure the summary, and generate one focused set of notes.</p></div>
             </article>
+          </div>
+        </section>
+
+
+        <section class="view" id="view-notes" data-title="Notes" data-eyebrow="Memory">
+          <div class="page-intro"><div><span class="section-kicker">Personal memory</span><h2>Write down what matters</h2><p>A note may contain any text you want to remember. Save it locally, edit it later, or ask Gemini to turn its meaning into memo flashcards.</p></div><div class="button-row"><button class="button secondary" id="newNoteButton">New note</button><button class="button primary" id="saveNoteButton">Save note</button></div></div>
+          <div class="two-column notes-layout">
+            <article class="panel note-editor-panel">
+              <div class="panel-heading"><div><h3>Note editor</h3><p>The title is optional. The note content is required.</p></div><span class="context-chip" id="noteEditingStatus">New note</span></div>
+              <label class="field-label" for="noteTitle">Title (optional)</label><input class="input" id="noteTitle" placeholder="e.g. DRAM refresh behaviour" />
+              <label class="field-label" for="noteLanguage">Language</label><select class="select" id="noteLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
+              <label class="field-label" for="noteContent">Note content</label><textarea class="textarea note-textarea" id="noteContent" placeholder="Write anything you want to remember…"></textarea>
+              <div class="field-footer"><span id="noteCharCount">0 characters</span><button class="text-button danger-text" id="clearNoteButton">Clear editor</button></div>
+              <div class="button-row"><button class="button primary" id="saveNoteInlineButton">Save note</button><button class="button secondary" id="createMemoCardsButton">Create memo cards</button><button class="button danger hidden" id="deleteCurrentNoteButton">Delete note</button></div>
+            </article>
+            <aside class="panel notes-list-panel">
+              <div class="panel-heading"><div><h3>Saved notes</h3><p>Open a note to continue editing it.</p></div><span class="context-chip" id="savedNoteCount">0 saved</span></div>
+              <div id="notesList" class="empty-state compact"><span>✎</span><strong>No notes saved</strong><p>Your saved notes will appear here.</p></div>
+            </aside>
           </div>
         </section>
 
@@ -273,17 +295,19 @@
         </section>
 
         <section class="view" id="view-flashcards" data-title="Flashcard builder" data-eyebrow="Recall">
-          <div class="page-intro"><div><span class="section-kicker">Gemini-assisted active recall</span><h2>Build flashcards from semantic templates</h2><p>Select a pool of saved semantic templates. Gemini studies their authoritative reference answers and decides when context should be combined or split into several focused cards.</p></div><div class="button-row"><button class="button secondary" id="generateFlashcardsButton">Generate flashcards</button><button class="button primary" id="startFlashcardsButton">Start review</button></div></div>
+          <div class="page-intro"><div><span class="section-kicker">Gemini-assisted active recall</span><h2>Build flashcards from templates or notes</h2><p>Use semantic templates for question and option cards, or saved notes for memo cards. Gemini decides when source content should become one focused card or several.</p></div><div class="button-row"><button class="button secondary" id="generateFlashcardsButton">Generate flashcards</button><button class="button primary" id="startFlashcardsButton">Start review</button></div></div>
           <div class="flashcard-builder-layout">
             <article class="panel">
-              <div class="panel-heading"><div><h3>Semantic template pool</h3><p>Only saved semantic templates are available. Hold Ctrl or Cmd to select several.</p></div><span class="context-chip" id="flashcardTemplateCount">0 available</span></div>
-              <select class="select flashcard-template-select" id="flashcardTemplatePool" multiple aria-label="Semantic templates for flashcards"></select>
+              <div id="semanticFlashcardSourcePanel"><div class="panel-heading"><div><h3>Semantic template pool</h3><p>Question and option cards use saved semantic templates. Hold Ctrl or Cmd to select several.</p></div><span class="context-chip" id="flashcardTemplateCount">0 available</span></div>
+              <select class="select flashcard-template-select" id="flashcardTemplatePool" multiple aria-label="Semantic templates for flashcards"></select></div>
+              <div id="memoFlashcardSourcePanel" class="hidden"><div class="panel-heading"><div><h3>Note pool</h3><p>Memo cards use saved notes. Hold Ctrl or Cmd to select several.</p></div><span class="context-chip" id="flashcardNoteCount">0 available</span></div>
+              <select class="select flashcard-template-select" id="flashcardNotePool" multiple aria-label="Notes for memo flashcards"></select></div>
               <div class="semantic-api-note">Reference answers and semantic task rubrics remain author-side data. Generated cards do not reveal full reference answers during review.</div>
             </article>
             <aside class="panel controls-panel">
               <h3>Flashcard settings</h3>
               <label class="field-label" for="flashcardSetTitle">Set title</label><input class="input" id="flashcardSetTitle" value="Semantic review" />
-              <label class="field-label" for="flashcardType">Flashcard type</label><select class="select" id="flashcardType"><option value="question">Question flashcards</option><option value="option">Option flashcards</option></select>
+              <label class="field-label" for="flashcardType">Flashcard type</label><select class="select" id="flashcardType"><option value="question">Question flashcards</option><option value="option">Option flashcards</option><option value="memo">Memo flashcards</option></select>
               <p class="control-help" id="flashcardTypeHelp">Learners type a short answer, which Gemini evaluates against the source context.</p>
               <button class="button secondary full" id="saveFlashcardSetButton">Save flashcard set</button>
               <button class="button ghost full" id="expandFlashcardsButton">Generate 1–3 extra cards per template</button>
@@ -296,7 +320,7 @@
           </div>
           <article class="panel flashcard-preview-panel">
             <div class="panel-heading"><div><h3>Generated cards</h3><p><span id="flashcardGeneratedCount">0</span> cards in the current set</p></div></div>
-            <div id="flashcardPreview" class="empty-state"><span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates and generate a question or option flashcard set.</p></div>
+            <div id="flashcardPreview" class="empty-state"><span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates or notes and generate a question, option, or memo flashcard set.</p></div>
           </article>
         </section>
 
@@ -327,7 +351,7 @@
               <div class="panel-heading"><div><h3>Language settings</h3><p>Choose the interface language and the default language for newly generated content.</p></div></div>
               <label class="field-label" for="interfaceLanguage">Interface language</label><select class="select" id="interfaceLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
               <label class="field-label" for="defaultContentLanguage">Default content language</label><select class="select" id="defaultContentLanguage"><option value="en">English</option><option value="ro">Romanian</option></select>
-              <div class="language-note">Saved summaries and exercises keep their own language. A quiz may contain exercises in both languages.</div>
+              <div class="language-note">Saved notes, summaries, exercises, and flashcards keep their own language. A quiz may contain exercises in both languages.</div>
             </article>
             <article class="panel">
               <div class="panel-heading"><div><h3>Local data</h3><p>Import, export, or clear this browser workspace.</p></div><strong id="settingsStorageSize">0 KB</strong></div>

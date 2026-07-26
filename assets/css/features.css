@@ -1507,3 +1507,63 @@
   padding: 6px 10px;
   font-size: .76rem;
 }
+
+/* Notes */
+.notes-layout {
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+  align-items: start;
+}
+
+.note-textarea {
+  min-height: 360px;
+  resize: vertical;
+}
+
+.notes-list {
+  display: grid;
+  gap: 12px;
+  max-height: 640px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.note-list-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+  overflow: hidden;
+  transition: border-color .2s ease, transform .2s ease;
+}
+
+.note-list-card:hover,
+.note-list-card.active {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.note-open-button {
+  display: grid;
+  width: 100%;
+  gap: 7px;
+  padding: 15px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-open-button strong { font-size: .98rem; }
+.note-open-button span {
+  color: var(--muted);
+  font-size: .86rem;
+  line-height: 1.45;
+}
+.note-open-button small { color: var(--muted); }
+
+.note-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 12px 12px;
+}

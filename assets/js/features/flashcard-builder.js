@@ -1,4 +1,4 @@
-const FLASHCARD_TYPES = new Set(['question', 'option']);
+const FLASHCARD_TYPES = new Set(['question', 'option', 'memo']);
 const LANGUAGE_NAMES = { en: 'English', ro: 'Romanian' };
 
 export function normalizeFlashcardType(value) {
@@ -19,7 +19,7 @@ export function createFlashcardResponseSchema(type = 'question', _sourceKeys = [
   };
   const required = ['front', 'expectedAnswer', 'explanation', 'sourceKeys'];
 
-  if (normalizedType === 'option') {
+  if (normalizedType === 'option' || normalizedType === 'memo') {
     properties.options = {
       type: 'array',
       items: { type: 'string' }
@@ -407,7 +407,7 @@ function stableCardNumber(card, fallback = 0) {
 export function distributeOptionAnswerPositions(flashcards = [], { startPosition = 1 } = {}) {
   let optionCardIndex = 0;
   return (flashcards || []).map(card => {
-    if (card?.type !== 'option' || !Array.isArray(card.options) || card.options.length < 2) return card;
+    if (!['option', 'memo'].includes(card?.type) || !Array.isArray(card.options) || card.options.length < 2) return card;
     const answer = String(card.expectedAnswer || '').trim();
     const answerNormalized = answer.toLocaleLowerCase();
     const distractors = card.options.filter(option => String(option).trim().toLocaleLowerCase() !== answerNormalized);
@@ -558,7 +558,7 @@ export function buildFlashcardReviewPrompt({ cards = [], comparisonCards = [] } 
     type: card.type,
     front: card.front,
     expectedAnswer: card.expectedAnswer,
-    options: card.type === 'option' ? card.options : undefined,
+    options: ['option', 'memo'].includes(card.type) ? card.options : undefined,
     language: card.language || 'en'
   }));
   const comparison = (comparisonCards || cards || []).map(card => ({ id: card.id, front: card.front, expectedAnswer: card.expectedAnswer }));
@@ -577,6 +577,7 @@ Rules:
 - Rewrite a card when its wording or incomplete phrase is too similar to another card and could let the learner answer from remembered sentence structure rather than knowledge.
 - Vary sentence structure, context, and cue direction while preserving the same factual answer.
 - For option cards, revisedFront must contain exactly one ____ blank and must not reveal the expected answer, acronym expansion, alias, or grammatical continuation.
+- For memo cards, keep a complete direct question with no ____ blank and do not reveal the expected answer in the question.
 - For question cards, keep a direct question and do not include the expected answer in the question.
 - Preserve the language and correct Romanian diacritics.
 - Mark changed=false and repeat the original front when no revision is needed.
@@ -630,7 +631,8 @@ export function normalizeGeneratedFlashcard(raw = {}, defaults = {}) {
     language,
     sourceKeys,
     supplemental: Boolean(raw.supplemental || defaults.supplemental),
-    sourceTemplateIds: Array.isArray(raw.sourceTemplateIds) ? [...new Set(raw.sourceTemplateIds.map(String))] : []
+    sourceTemplateIds: Array.isArray(raw.sourceTemplateIds) ? [...new Set(raw.sourceTemplateIds.map(String))] : [],
+    sourceNoteIds: Array.isArray(raw.sourceNoteIds) ? [...new Set(raw.sourceNoteIds.map(String))] : []
   };
   normalizeOptionClozeContext(normalized);
   validateFlashcard(normalized);
@@ -648,9 +650,11 @@ export function validateFlashcard(card) {
   }
 
   const blankCount = (card.front.match(/____/g) || []).length;
-  if (blankCount !== 1) throw new Error('An option flashcard must contain exactly one ____ blank.');
+  if (card.type === 'option' && blankCount !== 1) throw new Error('An option flashcard must contain exactly one ____ blank.');
+  if (card.type === 'memo' && blankCount !== 0) throw new Error('A memo flashcard must use a full question rather than a blank.');
+  if (card.type === 'memo' && !/[?？]\s*$/.test(card.front)) throw new Error('A memo flashcard must contain a complete question.');
   if (card.options.length < 3 || card.options.length > 5) {
-    throw new Error('An option flashcard must contain between 3 and 5 options.');
+    throw new Error(`${card.type === 'memo' ? 'A memo' : 'An option'} flashcard must contain between 3 and 5 options.`);
   }
   const normalizedOptions = card.options.map(value => value.toLocaleLowerCase().trim());
   if (new Set(normalizedOptions).size !== normalizedOptions.length) {
@@ -660,9 +664,11 @@ export function validateFlashcard(card) {
   if (answerMatches !== 1) {
     throw new Error('An option flashcard must contain its correct answer exactly once.');
   }
-  const leakedAlias = findOptionAnswerLeak(card);
-  if (leakedAlias) {
-    throw new Error(`An option flashcard reveals part of its correct answer in the statement: ${leakedAlias}.`);
+  if (card.type === 'option') {
+    const leakedAlias = findOptionAnswerLeak(card);
+    if (leakedAlias) {
+      throw new Error(`An option flashcard reveals part of its correct answer in the statement: ${leakedAlias}.`);
+    }
   }
   return true;
 }
@@ -705,6 +711,94 @@ export function validateFlashcardSourceCoverage(flashcards, phraseSources) {
     throw new Error(`Gemini omitted ${uncovered.length} reference-answer phrase${uncovered.length === 1 ? '' : 's'}. Generate the set again.`);
   }
   return { phraseByKey, covered };
+}
+
+
+export function createMemoFlashcardResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      flashcards: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            front: { type: 'string' },
+            expectedAnswer: { type: 'string' },
+            options: { type: 'array', items: { type: 'string' } },
+            explanation: { type: 'string' }
+          },
+          required: ['front', 'expectedAnswer', 'options', 'explanation']
+        }
+      }
+    },
+    required: ['flashcards']
+  };
+}
+
+export function splitNoteIntoMemoChunks(content, { maxCharacters = 4500 } = {}) {
+  const text = String(content || '').replace(/\r\n?/g, '\n').trim();
+  if (!text) return [];
+  const limit = Math.max(800, Math.floor(Number(maxCharacters) || 4500));
+  const paragraphs = text.split(/\n{2,}/).map(value => value.trim()).filter(Boolean);
+  const chunks = [];
+  let current = '';
+  const push = () => { if (current.trim()) chunks.push(current.trim()); current = ''; };
+  paragraphs.forEach(paragraph => {
+    if (paragraph.length > limit) {
+      push();
+      const sentences = paragraph.match(/[^.!?]+(?:[.!?]+|$)/g) || [paragraph];
+      sentences.forEach(sentence => {
+        const clean = sentence.trim();
+        if (!clean) return;
+        if (current && current.length + clean.length + 1 > limit) push();
+        current = current ? `${current} ${clean}` : clean;
+      });
+      return;
+    }
+    if (current && current.length + paragraph.length + 2 > limit) push();
+    current = current ? `${current}\n\n${paragraph}` : paragraph;
+  });
+  push();
+  return chunks;
+}
+
+export function buildMemoFlashcardPrompt({ noteTitle = '', noteContent = '', language = 'en', existingCards = [] } = {}) {
+  const languageName = LANGUAGE_NAMES[language === 'ro' ? 'ro' : 'en'];
+  const existing = (existingCards || []).map(card => ({ front: card.front, expectedAnswer: card.expectedAnswer }));
+  return `Create memo flashcards from the meaning of the supplied note.
+
+Return valid JSON only:
+{
+  "flashcards": [
+    {
+      "front": "A complete direct question?",
+      "expectedAnswer": "the one correct choice",
+      "options": ["correct choice", "plausible distractor", "plausible distractor"],
+      "explanation": "brief explanation grounded in the note"
+    }
+  ]
+}
+
+Rules:
+- Write every card in ${languageName}.
+- Understand the note before deciding how many cards are useful.
+- Create one card for a short note; create several cards only when the note contains several independently useful facts or concepts.
+- Each front must be a complete, natural question ending with a question mark. Do not use a ____ blank.
+- Provide 3 to 5 distinct, grammatically parallel choices with exactly one correct answer.
+- The expectedAnswer must occur exactly once in options.
+- Distractors must be plausible but contradicted by, or unsupported as the answer by, the note.
+- Use only information present in the note. Do not silently add external facts.
+- Keep each card focused on one recall target and avoid duplicating the existing cards.
+- Do not return Markdown or commentary outside the JSON object.
+
+Note title: ${noteTitle || '(untitled note)'}
+
+Note content:
+${noteContent}
+
+Existing memo cards to avoid duplicating:
+${JSON.stringify(existing, null, 2)}`;
 }
 
 export function buildQuestionFlashcardEvaluationPrompt({ card, learnerAnswer }) {

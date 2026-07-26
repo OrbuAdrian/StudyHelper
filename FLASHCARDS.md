@@ -226,3 +226,22 @@ Imported cards are normalized and validated before being displayed. In the gener
 - save or export the complete set.
 
 Individually saved cards are stored in `savedFlashcards` and appear in the **Saved cards** library tab. Deleting a card from the current set does not delete a separately saved copy. Saved individual cards can be opened as a one-card review set, exported, or deleted from the library.
+
+## Memo flashcards from notes
+
+Memo flashcards are the third flashcard type. They are sourced from saved notes rather than semantic templates.
+
+A memo card contains:
+
+- one complete question;
+- one expected answer;
+- 3–5 distinct selectable choices;
+- one correct choice stored in the card;
+- a short explanation;
+- source note identifiers.
+
+Gemini determines whether a note should produce one card or several cards by identifying independently useful facts and concepts. It must remain grounded in the note and may not silently add external material.
+
+Long notes are divided into paragraph-aware chunks before generation. Each chunk uses schema-constrained JSON when supported, then the existing JSON-mode and plain-text compatibility fallbacks. All returned cards are validated locally.
+
+Memo cards do not require Gemini during review. Their choices are reordered at review start, and the correct answer cycles through positions on successive reviews. Gemini may still be used by the optional wording-review action, which can change only the question wording and cannot change the answer or choices.

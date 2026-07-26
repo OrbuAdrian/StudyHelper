@@ -116,6 +116,7 @@ export function createEmptyState() {
     exercises: [],
     templates: [],
     quizzes: [],
+    notes: [],
     flashcardSets: [],
     savedFlashcards: [],
     flashcardAttempts: [],
@@ -123,6 +124,7 @@ export function createEmptyState() {
     quizDraft: [],
     currentSummary: null,
     currentExercise: null,
+    currentNote: null,
     currentFlashcardSet: null,
     settings: {
       rememberApiKey: false,

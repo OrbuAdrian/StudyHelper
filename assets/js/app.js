@@ -62,12 +62,14 @@ import {
   applyFlashcardReview,
   attachFlashcardSourceContext,
   buildFlashcardGenerationPrompt,
+  buildMemoFlashcardPrompt,
   buildFlashcardReviewPrompt,
   buildQuestionFlashcardEvaluationPrompt,
   buildSupplementalFlashcardPrompt,
   createFlashcardGenerationBatches,
   createFlashcardResponseSchema,
   createFlashcardReviewResponseSchema,
+  createMemoFlashcardResponseSchema,
   createSupplementalFlashcardResponseSchema,
   distributeOptionAnswerPositions,
   evaluateOptionFlashcard,
@@ -77,6 +79,7 @@ import {
   normalizeQuestionFlashcardEvaluation,
   runFlashcardBatchQueue,
   shouldRetryFlashcardGeneration,
+  splitNoteIntoMemoChunks,
   splitReferenceIntoPhraseUnits,
   validateFlashcard,
   validateFlashcardSourceCoverage,
@@ -114,7 +117,7 @@ function init() {
   document.querySelectorAll('[id]').forEach(el => { els[el.id] = el; });
   assertRequiredElements();
   bindNavigation(); bindGeneralControls(); bindSourceControls(); bindSummaryControls();
-  bindExerciseControls(); bindQuizControls(); bindFlashcardControls(); bindLibraryControls(); bindSettingsControls(); bindModalControls();
+  bindExerciseControls(); bindNotesControls(); bindQuizControls(); bindFlashcardControls(); bindLibraryControls(); bindSettingsControls(); bindModalControls();
   applyStoredStateToUI(); renderAll();
 
   if (typeof MutationObserver === 'function') {
@@ -128,7 +131,7 @@ function assertRequiredElements() {
     'mobileMenuButton', 'sidebar', 'mobileScrim', 'themeToggle',
     'sourceText', 'sourceTitle', 'useSourceButton', 'generateSummaryButton',
     'generateAiExerciseButton', 'createDirectExerciseButton', 'addQuizProblemButton',
-    'generateFlashcardsButton', 'flashcardTemplatePool', 'interfaceLanguage', 'interfaceLanguageQuick', 'defaultContentLanguage'
+    'generateFlashcardsButton', 'flashcardTemplatePool', 'flashcardNotePool', 'noteContent', 'saveNoteButton', 'interfaceLanguage', 'interfaceLanguageQuick', 'defaultContentLanguage'
   ];
   const missing = required.filter(id => !els[id]);
   if (missing.length) throw new Error(`Missing required interface elements: ${missing.join(', ')}`);
@@ -174,6 +177,7 @@ function loadState() {
         exercises: Array.isArray(stored.exercises) ? stored.exercises.map(normalizeStoredExercise) : [],
         templates: Array.isArray(stored.templates) ? stored.templates : [],
         quizzes: Array.isArray(stored.quizzes) ? stored.quizzes : [],
+        notes: Array.isArray(stored.notes) ? stored.notes.map(normalizeStoredNote).filter(Boolean) : [],
         flashcardSets: Array.isArray(stored.flashcardSets) ? stored.flashcardSets.map(normalizeStoredFlashcardSet).filter(Boolean) : [],
         savedFlashcards: Array.isArray(stored.savedFlashcards) ? stored.savedFlashcards.map(normalizeStoredFlashcard).filter(Boolean) : [],
         flashcardAttempts: Array.isArray(stored.flashcardAttempts) ? stored.flashcardAttempts : [],
@@ -186,6 +190,7 @@ function loadState() {
         problems: normalizeQuizProblems(quiz.problems || quiz.exercises || [], merged.templates, merged.exercises)
       }));
       if (merged.currentExercise) merged.currentExercise = normalizeStoredExercise(merged.currentExercise);
+      if (merged.currentNote) merged.currentNote = normalizeStoredNote(merged.currentNote);
       if (merged.currentFlashcardSet && typeof merged.currentFlashcardSet !== 'object') merged.currentFlashcardSet = null;
       if (merged.currentFlashcardSet?.flashcards) merged.currentFlashcardSet = normalizeStoredFlashcardSet(merged.currentFlashcardSet);
       if (!merged.settings.rememberApiKey) merged.settings.apiKey = '';
@@ -195,6 +200,21 @@ function loadState() {
       return base;
     }
   }
+
+function normalizeStoredNote(note) {
+  if (!note || typeof note !== 'object') return null;
+  const content = String(note.content || '').replace(/\r\n?/g, '\n').trim();
+  if (!content) return null;
+  return {
+    ...note,
+    id: String(note.id || uid()),
+    title: String(note.title || '').trim(),
+    content,
+    language: note.language === 'ro' ? 'ro' : 'en',
+    createdAt: note.createdAt || note.updatedAt || new Date().toISOString(),
+    updatedAt: note.updatedAt || note.createdAt || new Date().toISOString()
+  };
+}
 
 function normalizeStoredFlashcardSet(set) {
   if (!set || typeof set !== 'object') return null;
@@ -206,7 +226,7 @@ function normalizeStoredFlashcardSet(set) {
     : 0;
   return {
     ...set,
-    type: set.type === 'option' ? 'option' : 'question',
+    type: ['question', 'option', 'memo'].includes(set.type) ? set.type : (['question', 'option', 'memo'].includes(flashcards[0]?.type) ? flashcards[0].type : 'question'),
     optionReviewCycle,
     flashcards
   };
@@ -308,6 +328,7 @@ function navigateTo(viewName, updateHash = true) {
     closeMobileMenu();
     if (viewName === 'library') renderLibrary();
     if (viewName === 'quiz') renderQuizBuilder();
+    if (viewName === 'notes') renderNotes();
     if (viewName === 'flashcards') renderFlashcardBuilder();
   }
 
@@ -1525,6 +1546,143 @@ function formatProvidedAnswer(answer) {
   }
 
 
+
+function bindNotesControls() {
+  els.noteContent.addEventListener('input', updateNoteCharCount);
+  els.newNoteButton.addEventListener('click', startNewNote);
+  els.clearNoteButton.addEventListener('click', () => {
+    els.noteTitle.value = '';
+    els.noteContent.value = '';
+    updateNoteCharCount();
+  });
+  [els.saveNoteButton, els.saveNoteInlineButton].forEach(button => button.addEventListener('click', () => saveNoteFromEditor()));
+  els.deleteCurrentNoteButton.addEventListener('click', deleteCurrentNote);
+  els.createMemoCardsButton.addEventListener('click', createMemoCardsFromCurrentNote);
+}
+
+function noteDisplayTitle(note) {
+  return note?.title?.trim() || truncate(String(note?.content || '').split(/\n/).find(Boolean) || 'Untitled note', 64);
+}
+
+function updateNoteCharCount() {
+  if (els.noteCharCount) els.noteCharCount.textContent = `${els.noteContent.value.length.toLocaleString()} characters`;
+}
+
+function startNewNote() {
+  state.currentNote = null;
+  els.noteTitle.value = '';
+  els.noteContent.value = '';
+  els.noteLanguage.value = state.settings.contentLanguage || 'en';
+  updateNoteCharCount();
+  saveState();
+  renderNotes();
+  els.noteTitle.focus();
+}
+
+function noteFromEditor() {
+  const content = els.noteContent.value.replace(/\r\n?/g, '\n').trim();
+  if (!content) throw new Error('Write some note content before saving.');
+  const now = new Date().toISOString();
+  return {
+    id: state.currentNote?.id || uid(),
+    title: els.noteTitle.value.trim(),
+    content,
+    language: els.noteLanguage.value === 'ro' ? 'ro' : 'en',
+    createdAt: state.currentNote?.createdAt || now,
+    updatedAt: now
+  };
+}
+
+function saveNoteFromEditor({ silent = false } = {}) {
+  try {
+    const note = noteFromEditor();
+    const index = state.notes.findIndex(item => item.id === note.id);
+    if (index >= 0) state.notes.splice(index, 1);
+    state.notes.unshift(note);
+    state.currentNote = clone(note);
+    saveState();
+    renderNotes();
+    renderLibrary();
+    renderRecentWork();
+    if (!silent) toast(index >= 0 ? 'Note updated' : 'Note saved', 'The note was saved in your local library.', 'success');
+    return note;
+  } catch (error) {
+    if (!silent) toast('Note not saved', error.message, 'error');
+    return null;
+  }
+}
+
+function openNote(noteId) {
+  const note = state.notes.find(item => item.id === noteId);
+  if (!note) return;
+  state.currentNote = clone(note);
+  els.noteTitle.value = note.title || '';
+  els.noteContent.value = note.content || '';
+  els.noteLanguage.value = note.language || 'en';
+  updateNoteCharCount();
+  saveState();
+  renderNotes();
+}
+
+function deleteNoteById(noteId) {
+  state.notes = state.notes.filter(item => item.id !== noteId);
+  if (state.currentNote?.id === noteId) state.currentNote = null;
+  saveState();
+  startNewNote();
+  renderLibrary();
+  renderRecentWork();
+  renderFlashcardBuilder();
+  toast('Note deleted', 'The note was removed. Existing memo cards remain available as saved snapshots.', 'success');
+}
+
+function deleteCurrentNote() {
+  if (!state.currentNote?.id) return;
+  confirmAction('Delete this note?', 'The note will be removed from this browser. Existing memo cards will not be deleted.', () => deleteNoteById(state.currentNote.id));
+}
+
+function renderNotes() {
+  if (!els.notesList) return;
+  const current = state.currentNote;
+  els.noteEditingStatus.textContent = current ? 'Editing saved note' : 'New note';
+  els.deleteCurrentNoteButton.classList.toggle('hidden', !current);
+  els.savedNoteCount.textContent = `${state.notes.length} saved`;
+  if (!state.notes.length) {
+    els.notesList.className = 'empty-state compact';
+    els.notesList.innerHTML = '<span>✎</span><strong>No notes saved</strong><p>Your saved notes will appear here.</p>';
+    return;
+  }
+  els.notesList.className = 'notes-list';
+  els.notesList.innerHTML = state.notes.map(note => `<article class="note-list-card ${current?.id === note.id ? 'active' : ''}">
+    <button class="note-open-button" data-note-action="open" data-id="${escapeAttr(note.id)}"><strong>${escapeHtml(noteDisplayTitle(note))}</strong><span>${escapeHtml(truncate(note.content, 150))}</span><small>${escapeHtml(getLanguageName(note.language || 'en', state.settings.uiLanguage))} · ${escapeHtml(formatDate(note.updatedAt))}</small></button>
+    <div class="note-card-actions"><button class="button ghost small" data-note-action="memo" data-id="${escapeAttr(note.id)}">Memo cards</button><button class="button danger small" data-note-action="delete" data-id="${escapeAttr(note.id)}">Delete</button></div>
+  </article>`).join('');
+  els.notesList.querySelectorAll('[data-note-action]').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault();
+    const id = button.dataset.id;
+    if (button.dataset.noteAction === 'open') openNote(id);
+    if (button.dataset.noteAction === 'memo') prepareMemoCardsForNotes([id]);
+    if (button.dataset.noteAction === 'delete') confirmAction('Delete this note?', 'The note will be removed from this browser.', () => deleteNoteById(id));
+  }));
+}
+
+async function createMemoCardsFromCurrentNote() {
+  const note = saveNoteFromEditor({ silent: true });
+  if (!note) return toast('Note required', 'Write and save note content before creating memo cards.', 'error');
+  await prepareMemoCardsForNotes([note.id]);
+}
+
+async function prepareMemoCardsForNotes(noteIds) {
+  navigateTo('flashcards');
+  els.flashcardType.value = 'memo';
+  renderFlashcardBuilder();
+  const selected = new Set(noteIds);
+  Array.from(els.flashcardNotePool.options).forEach(option => { option.selected = selected.has(option.value); });
+  const notes = noteIds.map(id => state.notes.find(note => note.id === id)).filter(Boolean);
+  if (notes.length === 1) els.flashcardSetTitle.value = `Memo · ${noteDisplayTitle(notes[0])}`;
+  updateFlashcardTypeHelp();
+  await generateFlashcards();
+}
+
 function bindFlashcardControls() {
   els.generateFlashcardsButton.addEventListener('click', generateFlashcards);
   els.startFlashcardsButton.addEventListener('click', startFlashcardReview);
@@ -1564,9 +1722,15 @@ function getSemanticTemplateDescriptors() {
 
 function updateFlashcardTypeHelp() {
   if (!els.flashcardTypeHelp) return;
-  els.flashcardTypeHelp.textContent = els.flashcardType.value === 'option'
+  const type = els.flashcardType.value;
+  els.flashcardTypeHelp.textContent = type === 'option'
     ? 'Learners select the word or phrase that correctly completes one blank. Validation is stored in the card and runs locally.'
-    : 'Learners type a short answer, which Gemini evaluates against the source context.';
+    : type === 'memo'
+      ? 'Gemini understands the selected notes and creates complete questions with locally validated answer choices.'
+      : 'Learners type a short answer, which Gemini evaluates against the source context.';
+  els.semanticFlashcardSourcePanel.classList.toggle('hidden', type === 'memo');
+  els.memoFlashcardSourcePanel.classList.toggle('hidden', type !== 'memo');
+  if (els.expandFlashcardsButton) els.expandFlashcardsButton.classList.toggle('hidden', type === 'memo');
   scheduleInterfaceTranslation();
 }
 
@@ -1581,6 +1745,14 @@ function renderFlashcardBuilder() {
   els.flashcardTemplatePool.size = Math.max(4, Math.min(10, descriptors.length || 4));
   els.flashcardTemplateCount.textContent = t('flashcardsAvailable', state.settings.uiLanguage, { count: descriptors.length });
 
+  const selectedNotes = new Set([
+    ...Array.from(els.flashcardNotePool.selectedOptions || []).map(option => option.value),
+    ...(state.currentFlashcardSet?.noteIds || [])
+  ]);
+  els.flashcardNotePool.innerHTML = state.notes.map(note => `<option value="${escapeAttr(note.id)}" ${selectedNotes.has(note.id) ? 'selected' : ''}>${escapeHtml(noteDisplayTitle(note))} · ${escapeHtml(getLanguageName(note.language || 'en', state.settings.uiLanguage))}</option>`).join('');
+  els.flashcardNotePool.size = Math.max(4, Math.min(10, state.notes.length || 4));
+  els.flashcardNoteCount.textContent = t('flashcardsAvailable', state.settings.uiLanguage, { count: state.notes.length });
+
   const set = state.currentFlashcardSet;
   if (set) {
     els.flashcardSetTitle.value = set.title || 'Semantic review';
@@ -1592,6 +1764,10 @@ function renderFlashcardBuilder() {
 
 function getSelectedFlashcardTemplateIds() {
   return Array.from(els.flashcardTemplatePool.selectedOptions || []).map(option => option.value);
+}
+
+function getSelectedFlashcardNoteIds() {
+  return Array.from(els.flashcardNotePool.selectedOptions || []).map(option => option.value);
 }
 
 function buildFlashcardSourceBlocks(templateIds) {
@@ -1862,16 +2038,101 @@ function renderFlashcardGenerationDiagnostics(error) {
   </details>`;
 }
 
+
+async function requestMemoFlashcardsForChunk({ note, chunk, existingCards = [] }) {
+  let lastError = null;
+  const prompt = buildMemoFlashcardPrompt({
+    noteTitle: note.title || noteDisplayTitle(note),
+    noteContent: chunk,
+    language: note.language || 'en',
+    existingCards
+  });
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const retry = attempt === 1 ? '' : `\n\nThe previous response was invalid: ${lastError?.message || 'invalid output'}. Regenerate concise valid JSON from scratch.`;
+      const response = await callGemini(`${prompt}${retry}`, true, {
+        maxOutputTokens: 5000,
+        responseSchema: createMemoFlashcardResponseSchema(),
+        schemaFallback: true,
+        jsonCompatibilityFallback: true,
+        temperature: 0.25
+      });
+      const raw = parseJsonResponse(typeof response === 'string' ? response : response.text);
+      const normalized = normalizeGeneratedFlashcardSet(raw, {
+        title: note.title || noteDisplayTitle(note),
+        type: 'memo',
+        language: note.language || 'en',
+        idFactory: () => uid()
+      });
+      return normalized.flashcards.map(card => ({
+        ...card,
+        sourceNoteIds: [note.id],
+        sourceKeys: [],
+        gradingReference: chunk
+      }));
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryFlashcardGeneration(error)) break;
+    }
+  }
+  throw lastError || new Error(`Gemini could not create memo cards for “${noteDisplayTitle(note)}”.`);
+}
+
+async function generateMemoFlashcards({ title, noteIds }) {
+  const notes = noteIds.map(id => state.notes.find(note => note.id === id)).filter(Boolean);
+  if (!notes.length) throw new Error('Select at least one saved note before generating memo flashcards.');
+  const generated = [];
+  let completed = 0;
+  const planned = notes.flatMap(note => splitNoteIntoMemoChunks(note.content).map((chunk, index) => ({ note, chunk, index })));
+  if (!planned.length) throw new Error('The selected notes do not contain usable text.');
+
+  for (const item of planned) {
+    const cards = await requestMemoFlashcardsForChunk({ note: item.note, chunk: item.chunk, existingCards: generated });
+    cards.forEach(card => {
+      const key = `${normalizeText(card.front)}|${normalizeText(card.expectedAnswer)}`;
+      if (!generated.some(existing => `${normalizeText(existing.front)}|${normalizeText(existing.expectedAnswer)}` === key)) generated.push(card);
+    });
+    completed += 1;
+    els.flashcardPreview.innerHTML = `<div><div class="loading-spinner"></div><strong>Building memo cards · ${completed}/${planned.length}</strong><p>Understanding ${escapeHtml(noteDisplayTitle(item.note))}.</p></div>`;
+  }
+  if (!generated.length) throw new Error('Gemini did not return any memo flashcards.');
+  return {
+    title,
+    type: 'memo',
+    flashcards: generated,
+    noteIds,
+    noteSnapshots: notes.map(note => ({ id: note.id, title: note.title, language: note.language, updatedAt: note.updatedAt }))
+  };
+}
+
 async function generateFlashcards() {
   if (!ensureApiKey()) return;
-  const templateIds = getSelectedFlashcardTemplateIds();
-  if (!templateIds.length) return toast('Semantic templates required', 'Select at least one saved semantic template.', 'error');
-  const title = els.flashcardSetTitle.value.trim() || 'Semantic review';
-  const type = els.flashcardType.value === 'option' ? 'option' : 'question';
+  const title = els.flashcardSetTitle.value.trim() || 'Study review';
+  const type = ['question', 'option', 'memo'].includes(els.flashcardType.value) ? els.flashcardType.value : 'question';
+  const templateIds = type === 'memo' ? [] : getSelectedFlashcardTemplateIds();
+  const noteIds = type === 'memo' ? getSelectedFlashcardNoteIds() : [];
+  if (type === 'memo' && !noteIds.length) return toast('Notes required', 'Select at least one saved note.', 'error');
+  if (type !== 'memo' && !templateIds.length) return toast('Semantic templates required', 'Select at least one saved semantic template.', 'error');
   setButtonLoading(els.generateFlashcardsButton, true, 'Generating…');
   els.flashcardPreview.className = 'loading-state';
-  els.flashcardPreview.innerHTML = '<div><div class="loading-spinner"></div><strong>Building flashcards</strong><p>Gemini is deciding which statements should be combined or split for active recall.</p></div>';
+  els.flashcardPreview.innerHTML = `<div><div class="loading-spinner"></div><strong>Building flashcards</strong><p>${type === 'memo' ? 'Gemini is understanding the selected notes and designing complete recall questions.' : 'Gemini is deciding which statements should be combined or split for active recall.'}</p></div>`;
   try {
+    if (type === 'memo') {
+      const memoSet = await generateMemoFlashcards({ title, noteIds });
+      state.currentFlashcardSet = {
+        id: uid(),
+        ...memoSet,
+        optionReviewCycle: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      els.flashcardSetTitle.value = state.currentFlashcardSet.title;
+      renderFlashcardPreview();
+      saveState();
+      toast('Memo cards generated', `${memoSet.flashcards.length} memo card${memoSet.flashcards.length === 1 ? '' : 's'} created from ${noteIds.length} note${noteIds.length === 1 ? '' : 's'}.`, 'success');
+      return;
+    }
+
     const { sources, phraseSources, snapshots } = buildFlashcardSourceBlocks(templateIds);
     const { normalized, phraseByKey, batchCount } = await requestFlashcardGeneration({
       title,
@@ -1906,13 +2167,12 @@ async function generateFlashcards() {
     toast('Flashcards generated', `${normalized.flashcards.length} ${type === 'option' ? 'option' : 'question'} flashcard${normalized.flashcards.length === 1 ? '' : 's'} created across ${batchCount} Gemini call${batchCount === 1 ? '' : 's'}.`, 'success');
   } catch (error) {
     els.flashcardPreview.className = 'flashcard-generation-error';
-    els.flashcardPreview.innerHTML = `<div class="empty-state compact"><span>!</span><strong>Flashcard generation failed</strong><p>${escapeHtml(friendlyApiError(error))}</p></div>${renderFlashcardGenerationDiagnostics(error)}`;
+    els.flashcardPreview.innerHTML = `<div class="empty-state compact"><span>!</span><strong>Flashcard generation failed</strong><p>${escapeHtml(friendlyApiError(error))}</p></div>${type === 'memo' ? '' : renderFlashcardGenerationDiagnostics(error)}`;
     toast('Flashcard generation failed', friendlyApiError(error), 'error');
   } finally {
     setButtonLoading(els.generateFlashcardsButton, false);
   }
 }
-
 
 function currentFlashcardContentKey(card) {
   return `${card?.type || ''}|${normalizeText(card?.front || '')}|${normalizeText(card?.expectedAnswer || '')}`;
@@ -1961,8 +2221,9 @@ async function requestSupplementalFlashcardsForTemplate(set, templateContext) {
 }
 
 async function expandCurrentFlashcardSet() {
-  if (!ensureApiKey()) return;
   const set = state.currentFlashcardSet;
+  if (set?.type === 'memo') return toast('Not available for memo cards', 'Memo cards are generated directly from notes rather than semantic-template enrichment.', 'info');
+  if (!ensureApiKey()) return;
   if (!set?.flashcards?.length) return toast('Generate flashcards first', 'Create or import a flashcard set before adding enrichment cards.', 'error');
   const templateIds = (set.templateIds?.length ? set.templateIds : getSelectedFlashcardTemplateIds()).filter(id => state.templates.some(template => template.id === id));
   if (!templateIds.length) return toast('Semantic templates required', 'This set is not linked to any saved semantic templates.', 'error');
@@ -2084,6 +2345,7 @@ async function importFlashcardSetFile(file) {
       flashcards: importedCards,
       optionReviewCycle: Number.isFinite(Number(rawSet.optionReviewCycle)) ? Math.max(0, Math.trunc(Number(rawSet.optionReviewCycle))) : 0,
       templateIds: Array.isArray(rawSet.templateIds) ? rawSet.templateIds : [],
+      noteIds: Array.isArray(rawSet.noteIds) ? rawSet.noteIds : [],
       importedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -2164,14 +2426,14 @@ function renderFlashcardPreview() {
   ].forEach(button => { if (button) button.disabled = !enabled; });
   if (!enabled) {
     els.flashcardPreview.className = 'empty-state';
-    els.flashcardPreview.innerHTML = '<span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates, generate cards, or import a flashcard set.</p>';
+    els.flashcardPreview.innerHTML = '<span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates or notes, generate cards, or import a flashcard set.</p>';
     return;
   }
   const savedIds = new Set((state.savedFlashcards || []).map(card => card.id));
   els.flashcardPreview.className = 'flashcard-preview-grid';
   els.flashcardPreview.innerHTML = cards.map((card, index) => {
-    const sourceCount = card.sourceKeys?.length || 0;
-    const body = card.type === 'option'
+    const sourceCount = card.type === 'memo' ? (card.sourceNoteIds?.length || 0) : (card.sourceKeys?.length || 0);
+    const body = ['option', 'memo'].includes(card.type)
       ? `<div class="flashcard-option-preview">${card.options.map((option, optionIndex) => `<span class="${normalizeText(option) === normalizeText(card.expectedAnswer) ? 'correct-option' : ''}"><b>${String.fromCharCode(65 + optionIndex)}.</b> ${escapeHtml(option)}</span>`).join('')}</div>`
       : `<div class="flashcard-preview-answer"><span>Expected short answer</span><strong>${escapeHtml(card.expectedAnswer)}</strong></div>`;
     const badges = [
@@ -2179,10 +2441,10 @@ function renderFlashcardPreview() {
       savedIds.has(card.id) ? '<span class="context-chip success">Saved individually</span>' : ''
     ].filter(Boolean).join('');
     return `<article class="flashcard-preview-card" data-flashcard-id="${escapeAttr(card.id)}">
-      <div class="flashcard-preview-meta"><span>${index + 1}</span><b>${card.type === 'option' ? 'Option' : 'Question'}</b><small>${escapeHtml(getLanguageName(card.language || 'en', state.settings.uiLanguage))}</small></div>
+      <div class="flashcard-preview-meta"><span>${index + 1}</span><b>${card.type === 'option' ? 'Option' : card.type === 'memo' ? 'Memo' : 'Question'}</b><small>${escapeHtml(getLanguageName(card.language || 'en', state.settings.uiLanguage))}</small></div>
       ${badges ? `<div class="flashcard-preview-badges">${badges}</div>` : ''}
       <h4>${escapeHtml(card.front)}</h4>${body}<p>${escapeHtml(card.explanation || '')}</p>
-      <footer><span>${escapeHtml(t('sourceBlocksCount', state.settings.uiLanguage, { count: sourceCount }))}</span><div class="flashcard-card-actions"><button class="button ghost small" data-flashcard-action="save-card" data-id="${escapeAttr(card.id)}">${savedIds.has(card.id) ? 'Update saved card' : 'Save card'}</button><button class="button danger small" data-flashcard-action="delete-card" data-id="${escapeAttr(card.id)}">Delete</button></div></footer>
+      <footer><span>${card.type === 'memo' ? `${sourceCount} source note${sourceCount === 1 ? '' : 's'}` : escapeHtml(t('sourceBlocksCount', state.settings.uiLanguage, { count: sourceCount }))}</span><div class="flashcard-card-actions"><button class="button ghost small" data-flashcard-action="save-card" data-id="${escapeAttr(card.id)}">${savedIds.has(card.id) ? 'Update saved card' : 'Save card'}</button><button class="button danger small" data-flashcard-action="delete-card" data-id="${escapeAttr(card.id)}">Delete</button></div></footer>
     </article>`;
   }).join('');
   els.flashcardPreview.querySelectorAll('[data-flashcard-action]').forEach(button => button.addEventListener('click', () => {
@@ -2216,7 +2478,7 @@ function exportFlashcardsTxt() {
     '',
     ...set.flashcards.flatMap((card, index) => [
       `${index + 1}. ${card.front}`,
-      ...(card.type === 'option' ? card.options.map((option, optionIndex) => `   ${String.fromCharCode(65 + optionIndex)}) ${option}`) : []),
+      ...(['option', 'memo'].includes(card.type) ? card.options.map((option, optionIndex) => `   ${String.fromCharCode(65 + optionIndex)}) ${option}`) : []),
       `Answer: ${card.expectedAnswer}`,
       card.explanation ? `Explanation: ${card.explanation}` : '',
       ''
@@ -2269,7 +2531,7 @@ function renderFlashcardPlayer() {
   els.flashcardModalTitle.textContent = set.title;
   els.flashcardProgressLabel.textContent = t('cardOf', state.settings.uiLanguage, { current: index + 1, total: set.flashcards.length });
   els.flashcardProgressBar.style.width = `${((index + 1) / set.flashcards.length) * 100}%`;
-  const input = card.type === 'option'
+  const input = ['option', 'memo'].includes(card.type)
     ? `<div class="option-list">${card.options.map(option => `<label class="option-card"><input type="radio" name="flashcard-answer" value="${escapeAttr(option)}" ${response.answer === option ? 'checked' : ''}><span>${escapeHtml(option)}</span></label>`).join('')}</div>`
     : `<label class="flashcard-answer-field"><span>Your short answer</span><input class="input" id="flashcardAnswerInput" value="${escapeAttr(response.answer || '')}" placeholder="Enter a few words or a short phrase"></label>`;
   const result = response.result;
@@ -2279,7 +2541,7 @@ function renderFlashcardPlayer() {
   const apiNotice = card.type === 'question'
     ? `<div class="semantic-grading-notice ${getApiKey() ? 'ready' : 'unavailable'}"><span>${getApiKey() ? '◇' : '!'}</span><div><strong>Gemini answer check</strong><p>${getApiKey() ? 'Equivalent short answers are evaluated against the card’s authoritative source context.' : 'Gemini is unavailable, so this question card can be answered but not graded.'}</p></div></div>`
     : '';
-  els.flashcardPlayerBody.innerHTML = `<article class="flashcard-review-card"><div class="flashcard-review-type">${card.type === 'option' ? 'Complete the statement' : 'Answer the question'}</div><h3>${escapeHtml(card.front)}</h3>${apiNotice}${input}${feedback}</article>`;
+  els.flashcardPlayerBody.innerHTML = `<article class="flashcard-review-card"><div class="flashcard-review-type">${card.type === 'option' ? 'Complete the statement' : card.type === 'memo' ? 'Choose the best answer' : 'Answer the question'}</div><h3>${escapeHtml(card.front)}</h3>${apiNotice}${input}${feedback}</article>`;
   els.flashcardPreviousButton.disabled = index === 0;
   els.flashcardSubmitButton.classList.toggle('hidden', flashcardSession.awaitingNext);
   els.flashcardNextButton.classList.toggle('hidden', !flashcardSession.awaitingNext);
@@ -2289,7 +2551,7 @@ function renderFlashcardPlayer() {
 function getCurrentFlashcardAnswer() {
   if (!flashcardSession || flashcardSession.completed) return '';
   const card = flashcardSession.set.flashcards[flashcardSession.index];
-  const answer = card.type === 'option'
+  const answer = ['option', 'memo'].includes(card.type)
     ? (els.flashcardPlayerBody.querySelector('input[name="flashcard-answer"]:checked')?.value || '')
     : (els.flashcardPlayerBody.querySelector('#flashcardAnswerInput')?.value.trim() || '');
   flashcardSession.responses[flashcardSession.index].answer = answer;
@@ -2304,7 +2566,7 @@ async function submitFlashcardAnswer() {
   setButtonLoading(els.flashcardSubmitButton, true, 'Checking…');
   try {
     let result;
-    if (card.type === 'option') {
+    if (['option', 'memo'].includes(card.type)) {
       result = evaluateOptionFlashcard(card, answer);
     } else if (!getApiKey()) {
       result = { gradable: false, correct: null, score: 0, message: 'Gemini is unavailable, so this question flashcard cannot be graded right now.', method: 'unavailable' };
@@ -2510,7 +2772,7 @@ function bindLibraryControls() {
 function renderLibrary() {
     const data = state[activeLibraryTab] || [];
     if (!data.length) {
-      const emptyLabel = ({ summaries: 'summaries', exercises: 'exercises', templates: 'templates', quizzes: 'quizzes', flashcardSets: 'flashcard sets', savedFlashcards: 'individual flashcards', attempts: 'attempts' })[activeLibraryTab] || activeLibraryTab;
+      const emptyLabel = ({ notes: 'notes', summaries: 'summaries', exercises: 'exercises', templates: 'templates', quizzes: 'quizzes', flashcardSets: 'flashcard sets', savedFlashcards: 'individual flashcards', attempts: 'attempts' })[activeLibraryTab] || activeLibraryTab;
       els.libraryContent.innerHTML = `<div class="empty-state"><span>▣</span><strong>No ${escapeHtml(emptyLabel)} saved</strong><p>Items you save will appear here and remain available in this browser.</p></div>`;
       return;
     }
@@ -2519,28 +2781,31 @@ function renderLibrary() {
   }
 
 function renderLibraryCard(item, type) {
-    const date = formatDate(item.createdAt || item.savedAt || item.updatedAt || item.completedAt); const title = type === 'savedFlashcards' ? truncate(item.front || 'Flashcard', 90) : (item.title || item.name || item.quizTitle || 'Untitled');
-    const singular = { summaries: 'summary', exercises: 'exercise', templates: 'template', quizzes: 'quiz', flashcardSets: 'flashcard set', savedFlashcards: 'flashcard', attempts: 'attempt' }[type] || type;
+    const date = formatDate(item.createdAt || item.savedAt || item.updatedAt || item.completedAt); const title = type === 'savedFlashcards' ? truncate(item.front || 'Flashcard', 90) : type === 'notes' ? noteDisplayTitle(item) : (item.title || item.name || item.quizTitle || 'Untitled');
+    const singular = { notes: 'note', summaries: 'summary', exercises: 'exercise', templates: 'template', quizzes: 'quiz', flashcardSets: 'flashcard set', savedFlashcards: 'flashcard', attempts: 'attempt' }[type] || type;
     let description = '';
+    if (type === 'notes') description = item.content || '';
     if (type === 'summaries') description = stripMarkdown(item.content || '');
     if (type === 'exercises') description = item.question || '';
     if (type === 'templates') description = item.text || '';
     if (type === 'quizzes') description = `${item.problems?.length || item.exercises?.length || 0} problems · randomized candidates · ${humanizeType(item.feedbackTiming || '')} feedback`;
-    if (type === 'flashcardSets') description = `${item.flashcards?.length || 0} cards · ${item.type === 'option' ? 'option completion' : 'Gemini-graded questions'}`;
-    if (type === 'savedFlashcards') description = `${item.type === 'option' ? 'Option completion' : 'Gemini-graded question'} · Answer: ${item.expectedAnswer || ''}${item.setTitle ? ` · From ${item.setTitle}` : ''}`;
+    if (type === 'flashcardSets') description = `${item.flashcards?.length || 0} cards · ${item.type === 'option' ? 'option completion' : item.type === 'memo' ? 'note-derived memo questions' : 'Gemini-graded questions'}`;
+    if (type === 'savedFlashcards') description = `${item.type === 'option' ? 'Option completion' : item.type === 'memo' ? 'Memo question' : 'Gemini-graded question'} · Answer: ${item.expectedAnswer || ''}${item.setTitle ? ` · From ${item.setTitle}` : ''}`;
     if (type === 'attempts') { const graded = item.graded ?? item.total; const ungradable = item.ungradable || 0; description = `Score: ${item.score}/${graded} graded${ungradable ? ` · ${ungradable} ungradable` : ''}${graded ? ` (${Math.round((item.score / graded) * 100)}%)` : ''}`; }
     return `<article class="library-card"><span class="meta-pill">${escapeHtml(singular)}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p><div class="library-card-footer"><span>${escapeHtml(date)}</span><div class="library-card-actions"><button data-library-action="open" data-id="${escapeAttr(item.id)}">Open</button><button data-library-action="export" data-id="${escapeAttr(item.id)}">Export</button><button data-library-action="delete" data-id="${escapeAttr(item.id)}">Delete</button></div></div></article>`;
   }
 
 function handleLibraryAction(action, id, type) {
     const collection = state[type]; const item = collection.find(entry => entry.id === id); if (!item) return;
+    if (action === 'delete' && type === 'notes') return confirmAction('Delete this note?', 'The note will be removed from this browser. Existing memo cards will remain available.', () => deleteNoteById(id));
     if (action === 'delete') return confirmAction('Delete saved item?', 'This item will be removed from the local browser library.', () => { state[type] = collection.filter(entry => entry.id !== id); saveState(); renderLibrary(); renderRecentWork(); renderStats(); if (type === 'savedFlashcards') renderFlashcardPreview(); });
-    if (action === 'export') return downloadJson(`${slugify(item.title || item.name || item.quizTitle || item.front || type)}.json`, item);
+    if (action === 'export') return downloadJson(`${slugify(type === 'notes' ? noteDisplayTitle(item) : (item.title || item.name || item.quizTitle || item.front || type))}.json`, item);
     if (action === 'open') openLibraryItem(item, type);
   }
 
 function openLibraryItem(item, type) {
-    if (type === 'summaries') { state.currentSummary = clone(item); renderSummaryOutput(); navigateTo('summary'); }
+    if (type === 'notes') { openNote(item.id); navigateTo('notes'); }
+    else if (type === 'summaries') { state.currentSummary = clone(item); renderSummaryOutput(); navigateTo('summary'); }
     else if (type === 'exercises') {
       state.currentExercise = clone(item); const tab = item.source === 'template' ? 'template' : item.source === 'direct' ? 'direct' : 'ai'; switchExerciseTab(tab);
       const host = tab === 'template' ? els.templateExerciseHost : tab === 'direct' ? els.directExerciseHost : els.aiExerciseHost; renderExerciseCard(item, host); navigateTo('exercise');
@@ -2555,6 +2820,7 @@ function openLibraryItem(item, type) {
     } else if (type === 'flashcardSets') {
       state.currentFlashcardSet = clone(item);
       els.flashcardTemplatePool.innerHTML = '';
+      els.flashcardNotePool.innerHTML = '';
       renderFlashcardBuilder();
       navigateTo('flashcards');
     } else if (type === 'savedFlashcards') {
@@ -2564,6 +2830,7 @@ function openLibraryItem(item, type) {
         type: item.type || 'question',
         flashcards: [clone(item)],
         templateIds: item.sourceTemplateIds || [],
+        noteIds: item.sourceNoteIds || [],
         optionReviewCycle: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -2587,7 +2854,7 @@ function bindSettingsControls() {
     els.importWorkspaceButton.addEventListener('click', () => els.workspaceImportFile.click());
     els.workspaceImportFile.addEventListener('change', event => importWorkspace(event.target.files?.[0]));
     els.settingsExportWorkspaceButton.addEventListener('click', exportWorkspace);
-    els.clearWorkspaceButton.addEventListener('click', () => confirmAction('Clear the entire workspace?', 'Saved summaries, exercises, templates, quizzes, flashcard sets, individual flashcards, attempts, and settings will be deleted from this browser.', () => {
+    els.clearWorkspaceButton.addEventListener('click', () => confirmAction('Clear the entire workspace?', 'Saved notes, summaries, exercises, templates, quizzes, flashcard sets, individual flashcards, attempts, and settings will be deleted from this browser.', () => {
       localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem(SESSION_KEY); state = createEmptyState(); applyStoredStateToUI(); renderAll(); toast('Workspace cleared', 'All local Study Forge data was removed.', 'success');
     }));
   }
@@ -2603,7 +2870,7 @@ function setInterfaceLanguage(language) {
 
 function applyDefaultContentLanguage(force = true) {
   const language = state.settings.contentLanguage || 'en';
-  [els.summaryLanguage, els.aiExerciseLanguage, els.directLanguage].forEach(select => {
+  [els.summaryLanguage, els.aiExerciseLanguage, els.directLanguage, els.noteLanguage].forEach(select => {
     if (select && (force || !select.dataset.userSelected)) select.value = language;
   });
 }
@@ -2653,6 +2920,14 @@ function applyStoredStateToUI() {
     els.interfaceLanguageQuick.value = state.settings.uiLanguage;
     els.defaultContentLanguage.value = state.settings.contentLanguage;
     applyDefaultContentLanguage(true);
+    if (state.currentNote) {
+      els.noteTitle.value = state.currentNote.title || '';
+      els.noteContent.value = state.currentNote.content || '';
+      els.noteLanguage.value = state.currentNote.language || state.settings.contentLanguage || 'en';
+    } else {
+      els.noteLanguage.value = state.settings.contentLanguage || 'en';
+    }
+    updateNoteCharCount();
     if (!els.templateText.value) { els.templateName.value = 'Asynchronous serial transmission'; els.templateText.value = DEFAULT_TEMPLATE; }
     updateAiExerciseControls();
     updateDirectExerciseControls();
@@ -2662,7 +2937,7 @@ function applyStoredStateToUI() {
   }
 
 function renderAll() {
-    renderSourceStatus(); renderApiStatus(); renderStats(); renderRecentWork(); renderQuizBuilder(); renderFlashcardBuilder(); renderLibrary(); updateStorageIndicators();
+    renderSourceStatus(); renderApiStatus(); renderStats(); renderRecentWork(); renderNotes(); renderQuizBuilder(); renderFlashcardBuilder(); renderLibrary(); updateStorageIndicators();
     if (state.currentSummary) renderSummaryOutput();
     if (state.currentExercise) {
       const tab = state.currentExercise.source === 'template' ? 'template' : state.currentExercise.source === 'direct' ? 'direct' : 'ai';
@@ -2681,15 +2956,15 @@ function renderApiStatus(forced) {
     els.settingsApiBadge.className = `status-badge ${connected ? 'connected' : 'disconnected'}`;
     els.settingsApiBadge.textContent = connected ? t('configured', state.settings.uiLanguage) : t('notConnected', state.settings.uiLanguage);
   }
-function renderStats() { els.summaryCount.textContent = state.summaries.length; els.exerciseCount.textContent = state.exercises.length; els.templateCount.textContent = state.templates.length; els.attemptCount.textContent = state.attempts.length; els.quizNavCount.textContent = state.quizDraft.length; els.flashcardSetCount.textContent = state.flashcardSets.length; els.flashcardNavCount.textContent = state.flashcardSets.length + (state.savedFlashcards?.length || 0); }
+function renderStats() { els.summaryCount.textContent = state.summaries.length; els.exerciseCount.textContent = state.exercises.length; els.templateCount.textContent = state.templates.length; els.noteCount.textContent = state.notes.length; els.noteNavCount.textContent = state.notes.length; els.attemptCount.textContent = state.attempts.length; els.quizNavCount.textContent = state.quizDraft.length; els.flashcardSetCount.textContent = state.flashcardSets.length; els.flashcardNavCount.textContent = state.flashcardSets.length + (state.savedFlashcards?.length || 0); }
 
 function renderRecentWork() {
-    const items = [...state.summaries.map(item => ({ ...item, _type: 'Summary', _date: item.createdAt })), ...state.exercises.map(item => ({ ...item, _type: 'Exercise', _date: item.createdAt })), ...state.templates.map(item => ({ ...item, _type: 'Template', _date: item.updatedAt })), ...state.flashcardSets.map(item => ({ ...item, _type: 'Flashcards', _date: item.updatedAt || item.createdAt }))].sort((a, b) => new Date(b._date) - new Date(a._date)).slice(0, 4);
-    if (!items.length) { els.recentWork.className = 'empty-state compact'; els.recentWork.innerHTML = '<span>◇</span><strong>No saved work yet</strong><p>Your latest summaries, exercises, and templates will appear here.</p>'; return; }
+    const items = [...state.notes.map(item => ({ ...item, title: noteDisplayTitle(item), _type: 'Note', _date: item.updatedAt || item.createdAt })), ...state.summaries.map(item => ({ ...item, _type: 'Summary', _date: item.createdAt })), ...state.exercises.map(item => ({ ...item, _type: 'Exercise', _date: item.createdAt })), ...state.templates.map(item => ({ ...item, _type: 'Template', _date: item.updatedAt })), ...state.flashcardSets.map(item => ({ ...item, _type: 'Flashcards', _date: item.updatedAt || item.createdAt }))].sort((a, b) => new Date(b._date) - new Date(a._date)).slice(0, 4);
+    if (!items.length) { els.recentWork.className = 'empty-state compact'; els.recentWork.innerHTML = '<span>◇</span><strong>No saved work yet</strong><p>Your latest notes, summaries, exercises, templates, and flashcards will appear here.</p>'; return; }
     els.recentWork.className = 'quick-actions';
-    els.recentWork.innerHTML = items.map(item => `<button class="quick-action" data-recent-type="${item._type.toLowerCase()}" data-recent-id="${escapeAttr(item.id)}"><span class="quick-icon lavender">${item._type === 'Summary' ? '≡' : item._type === 'Exercise' ? '✦' : item._type === 'Flashcards' ? '◇' : '▤'}</span><span><strong>${escapeHtml(item.title || item.name || truncate(item.question, 50))}</strong><small>${escapeHtml(item._type)} · ${escapeHtml(formatDate(item._date))}</small></span><b>→</b></button>`).join('');
+    els.recentWork.innerHTML = items.map(item => `<button class="quick-action" data-recent-type="${item._type.toLowerCase()}" data-recent-id="${escapeAttr(item.id)}"><span class="quick-icon lavender">${item._type === 'Note' ? '✎' : item._type === 'Summary' ? '≡' : item._type === 'Exercise' ? '✦' : item._type === 'Flashcards' ? '◇' : '▤'}</span><span><strong>${escapeHtml(item.title || item.name || truncate(item.question, 50))}</strong><small>${escapeHtml(item._type)} · ${escapeHtml(formatDate(item._date))}</small></span><b>→</b></button>`).join('');
     els.recentWork.querySelectorAll('[data-recent-id]').forEach(button => button.addEventListener('click', () => {
-      const mapping = { summary: 'summaries', exercise: 'exercises', template: 'templates', flashcards: 'flashcardSets' }; const type = mapping[button.dataset.recentType]; const item = state[type].find(entry => entry.id === button.dataset.recentId); if (item) openLibraryItem(item, type);
+      const mapping = { note: 'notes', summary: 'summaries', exercise: 'exercises', template: 'templates', flashcards: 'flashcardSets' }; const type = mapping[button.dataset.recentType]; const item = state[type].find(entry => entry.id === button.dataset.recentId); if (item) openLibraryItem(item, type);
     }));
   }
 
@@ -2792,7 +3067,7 @@ function exportWorkspace() {
     const exported = clone(state);
     exported.settings.apiKey = '';
     downloadJson(`study-forge-workspace-${new Date().toISOString().slice(0, 10)}.json`, {
-      app: 'Study Forge', version: 7, exportedAt: new Date().toISOString(), data: exported
+      app: 'Study Forge', version: 8, exportedAt: new Date().toISOString(), data: exported
     });
     toast('Workspace exported', 'Your study data was saved without the Gemini API key.', 'success');
   }
@@ -2814,6 +3089,7 @@ async function importWorkspace(file) {
         exercises: Array.isArray(incoming.exercises) ? incoming.exercises.map(normalizeStoredExercise) : [],
         templates: Array.isArray(incoming.templates) ? incoming.templates : [],
         quizzes: Array.isArray(incoming.quizzes) ? incoming.quizzes : [],
+        notes: Array.isArray(incoming.notes) ? incoming.notes.map(normalizeStoredNote).filter(Boolean) : [],
         flashcardSets: Array.isArray(incoming.flashcardSets) ? incoming.flashcardSets.map(normalizeStoredFlashcardSet).filter(Boolean) : [],
         savedFlashcards: Array.isArray(incoming.savedFlashcards) ? incoming.savedFlashcards.map(normalizeStoredFlashcard).filter(Boolean) : [],
         flashcardAttempts: Array.isArray(incoming.flashcardAttempts) ? incoming.flashcardAttempts : [],
@@ -2821,6 +3097,7 @@ async function importWorkspace(file) {
         quizDraft: []
       };
       if (state.currentExercise) state.currentExercise = normalizeStoredExercise(state.currentExercise);
+      if (state.currentNote) state.currentNote = normalizeStoredNote(state.currentNote);
       if (state.currentFlashcardSet?.flashcards) state.currentFlashcardSet = normalizeStoredFlashcardSet(state.currentFlashcardSet);
       state.quizDraft = normalizeQuizProblems(incoming.quizDraft || [], state.templates, state.exercises);
       state.quizzes = state.quizzes.map(quiz => ({

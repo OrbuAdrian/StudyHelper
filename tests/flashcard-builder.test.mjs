@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import {
   applyFlashcardReview,
   buildFlashcardGenerationPrompt,
+  buildMemoFlashcardPrompt,
   buildFlashcardReviewPrompt,
   buildSupplementalFlashcardPrompt,
   attachFlashcardSourceContext,
   buildQuestionFlashcardEvaluationPrompt,
   createFlashcardGenerationBatches,
+  createMemoFlashcardResponseSchema,
   createFlashcardResponseSchema,
   distributeOptionAnswerPositions,
   evaluateOptionFlashcard,
@@ -15,6 +17,7 @@ import {
   normalizeQuestionFlashcardEvaluation,
   runFlashcardBatchQueue,
   splitFlashcardGenerationBatch,
+  splitNoteIntoMemoChunks,
   splitReferenceIntoPhraseUnits,
   validateSemanticFlashcardSources,
   validateFlashcardSourceCoverage
@@ -255,5 +258,37 @@ const similarPairs = findSimilarFlashcardPairs([
 assert.equal(similarPairs.length, 1);
 assert.equal(similarPairs[0].leftId, 's1');
 
+
+
+const memoChunks = splitNoteIntoMemoChunks('First paragraph about DRAM.\n\nSecond paragraph about SRAM.', { maxCharacters: 800 });
+assert.equal(memoChunks.length, 1);
+const longMemoChunks = splitNoteIntoMemoChunks(`${'A'.repeat(900)}. ${'B'.repeat(900)}.`, { maxCharacters: 800 });
+assert.equal(longMemoChunks.length >= 2, true);
+const memoPrompt = buildMemoFlashcardPrompt({
+  noteTitle: 'Memory types',
+  noteContent: 'DRAM requires periodic refresh. SRAM does not require refresh.',
+  language: 'en'
+});
+assert.match(memoPrompt, /complete direct question/i);
+assert.match(memoPrompt, /3 to 5 distinct/i);
+assert.match(memoPrompt, /Use only information present in the note/i);
+const memoSchema = createMemoFlashcardResponseSchema();
+assert.equal(memoSchema.properties.flashcards.items.required.includes('options'), true);
+const memoSet = normalizeGeneratedFlashcardSet({ flashcards: [{
+  front: 'Which memory type requires periodic refresh?',
+  expectedAnswer: 'DRAM',
+  options: ['SRAM', 'ROM', 'DRAM'],
+  explanation: 'The note states that DRAM requires refresh.'
+}] }, { type: 'memo', language: 'en', idFactory: () => 'memo-1' });
+assert.equal(memoSet.flashcards[0].type, 'memo');
+assert.equal(evaluateOptionFlashcard(memoSet.flashcards[0], 'DRAM').correct, true);
+assert.throws(() => normalizeGeneratedFlashcardSet({ flashcards: [{
+  front: 'DRAM requires ____.',
+  expectedAnswer: 'refresh',
+  options: ['refresh', 'no power', 'compilation'],
+  explanation: ''
+}] }, { type: 'memo' }), /full question/i);
+const memoReviewPositions = distributeOptionAnswerPositions([memoSet.flashcards[0]], { startPosition: 1 });
+assert.equal(memoReviewPositions[0].options.indexOf('DRAM'), 1);
 
 console.log('Flashcard builder tests passed.');

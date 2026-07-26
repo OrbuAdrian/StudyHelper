@@ -27,6 +27,11 @@ for (const id of [
   'directSemanticStrictness',
   'directConceptMode',
   'loadMultipleChoiceTemplateButton',
+  'noteTitle',
+  'noteContent',
+  'saveNoteButton',
+  'createMemoCardsButton',
+  'flashcardNotePool',
   'generateFlashcardsButton',
   'flashcardTemplatePool',
   'expandFlashcardsButton',
@@ -63,6 +68,7 @@ assert.match(app, /semanticConfig:\s*semanticTask/);
 assert.match(app, /buildFlashcardGenerationPrompt/);
 assert.match(app, /buildQuestionFlashcardEvaluationPrompt/);
 assert.match(html, /data-view="flashcards"/);
+assert.match(config, /notes:\s*\[\]/);
 assert.match(config, /flashcardSets:\s*\[\]/);
 assert.match(config, /savedFlashcards:\s*\[\]/);
 assert.match(app, /distributeOptionAnswerPositions/);
@@ -71,4 +77,8 @@ assert.match(app, /startPosition:\s*optionReviewCycle/);
 assert.match(app, /buildSupplementalFlashcardPrompt/);
 assert.match(app, /buildFlashcardReviewPrompt/);
 assert.match(app, /importFlashcardSetFile/);
+assert.match(app, /buildMemoFlashcardPrompt/);
+assert.match(app, /splitNoteIntoMemoChunks/);
+assert.match(html, /data-view="notes"/);
+assert.match(html, /value="memo"/);
 console.log('Static integration tests passed.');

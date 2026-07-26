@@ -220,3 +220,16 @@ Exercises with several independently graded fields use the public type name `mul
 - full-set wording-review prompt and response contracts.
 
 `assets/js/app.js` coordinates per-template enrichment calls, batched full-set review, set import, current-set editing, and the `savedFlashcards` library collection. Complete sets and individual cards remain separate storage objects.
+
+## Notes and memo-card path
+
+`createEmptyState()` now includes `notes` and `currentNote`. A note is a small browser-local object containing optional title, required content, language, and timestamps. Notes are managed by `assets/js/app.js`, displayed in their own view, and exposed through the Library and workspace import/export.
+
+Memo generation reuses `assets/js/features/flashcard-builder.js` for pure domain rules:
+
+- `splitNoteIntoMemoChunks()` creates paragraph-aware request batches;
+- `buildMemoFlashcardPrompt()` asks Gemini to understand note meaning and choose one or several atomic questions;
+- `createMemoFlashcardResponseSchema()` requests complete questions, expected answers, choices, and explanations;
+- normal flashcard validation enforces 3–5 distinct options, one correct answer, a full question, and no cloze blank.
+
+Memo cards store `sourceNoteIds`. They are validated locally with the option-card evaluator. `distributeOptionAnswerPositions()` applies to both option and memo cards, so correct choices rotate on each review without mutating the stored set.
