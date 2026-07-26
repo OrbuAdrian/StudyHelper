@@ -29,6 +29,11 @@ for (const id of [
   'loadMultipleChoiceTemplateButton',
   'generateFlashcardsButton',
   'flashcardTemplatePool',
+  'expandFlashcardsButton',
+  'reviewFlashcardsButton',
+  'importFlashcardSetButton',
+  'flashcardSetImportFile',
+  'deleteAllFlashcardsButton',
   'flashcardModal'
 ]) assert.equal(ids.has(id), true, `Missing required control: ${id}`);
 
@@ -59,4 +64,11 @@ assert.match(app, /buildFlashcardGenerationPrompt/);
 assert.match(app, /buildQuestionFlashcardEvaluationPrompt/);
 assert.match(html, /data-view="flashcards"/);
 assert.match(config, /flashcardSets:\s*\[\]/);
+assert.match(config, /savedFlashcards:\s*\[\]/);
+assert.match(app, /distributeOptionAnswerPositions/);
+assert.match(app, /optionReviewCycle/);
+assert.match(app, /startPosition:\s*optionReviewCycle/);
+assert.match(app, /buildSupplementalFlashcardPrompt/);
+assert.match(app, /buildFlashcardReviewPrompt/);
+assert.match(app, /importFlashcardSetFile/);
 console.log('Static integration tests passed.');

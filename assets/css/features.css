@@ -1475,3 +1475,35 @@
 .flashcard-diagnostic-error {
   color: var(--danger);
 }
+
+.flashcard-preview-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.context-chip.success {
+  color: var(--mint);
+  border-color: color-mix(in srgb, var(--mint) 35%, var(--line));
+  background: var(--mint-soft);
+}
+
+.flashcard-preview-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.flashcard-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.button.small {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: .76rem;
+}

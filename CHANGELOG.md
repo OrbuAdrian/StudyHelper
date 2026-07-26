@@ -1,5 +1,18 @@
 # Changelog
 
+## Flashcard professionalization, enrichment, and set editing
+
+- Distributed correct option positions locally so option-card answers no longer inherit Gemini's first-option ordering.
+- Added context-aware cloze normalization for acronym and expansion pairs such as `DRAM (Dynamic Random-Access Memory)`.
+- Added local answer-leak validation for option-card statements.
+- Added **Generate 1–3 extra cards per template**, using the semantic exercise definition and avoiding facts already explicit in reference answers or existing cards.
+- Added **Review wording with Gemini**, which reviews every card and rewrites overly similar cues while preserving answers, choices, grading references, and provenance.
+- Added JSON flashcard-set import with validation and migration.
+- Added per-card deletion, delete-all-current-cards, and per-card save/update controls.
+- Added a `savedFlashcards` library collection and a dedicated **Saved cards** tab.
+- Advanced workspace export schema to version 7.
+- Added regression coverage for correct-answer placement, acronym/expansion cloze handling, enrichment prompts, wording-review application, and new interface controls.
+
 ## Flashcard request compatibility and author diagnostics
 
 - Reduced the Gemini flashcard response schema to the smallest portable subset: `type`, `properties`, `required`, and `items`.

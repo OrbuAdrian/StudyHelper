@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import {
+  applyFlashcardReview,
   buildFlashcardGenerationPrompt,
+  buildFlashcardReviewPrompt,
+  buildSupplementalFlashcardPrompt,
   attachFlashcardSourceContext,
   buildQuestionFlashcardEvaluationPrompt,
   createFlashcardGenerationBatches,
   createFlashcardResponseSchema,
+  distributeOptionAnswerPositions,
   evaluateOptionFlashcard,
+  findSimilarFlashcardPairs,
   normalizeGeneratedFlashcardSet,
   normalizeQuestionFlashcardEvaluation,
   runFlashcardBatchQueue,
@@ -191,5 +196,64 @@ try {
   assert.match(error.message, /Long task/);
 }
 assert.equal(preservedDiagnostics?.parsedSources?.[0]?.sourceKey, 'long:TASK');
+
+
+const dramSet = normalizeGeneratedFlashcardSet({
+  flashcards: [{
+    front: 'Memoria ____ (Dynamic Random-Access Memory) trebuie reîmprospătată periodic.',
+    expectedAnswer: 'DRAM',
+    options: ['DRAM', 'SRAM', 'ROM'],
+    explanation: 'DRAM stores bits in capacitors.',
+    sourceKeys: ['dram:P1']
+  }]
+}, { type: 'option', language: 'ro', idFactory: () => 'dram-card' });
+assert.equal(dramSet.flashcards[0].front, 'Memoria ____ trebuie reîmprospătată periodic.');
+assert.equal(dramSet.flashcards[0].expectedAnswer, 'DRAM (Dynamic Random-Access Memory)');
+assert.equal(dramSet.flashcards[0].options.includes('DRAM (Dynamic Random-Access Memory)'), true);
+assert.doesNotThrow(() => normalizeGeneratedFlashcardSet({ flashcards: [{
+  front: 'A program stores temporary data in ____ memory.',
+  expectedAnswer: 'RAM',
+  options: ['RAM', 'ROM', 'SSD'],
+  explanation: 'RAM is volatile working memory.'
+}] }, { type: 'option', language: 'en' }));
+
+
+const optionCards = [
+  { id: 'one', type: 'option', front: 'A ____.', expectedAnswer: 'a', options: ['a', 'b', 'c'] },
+  { id: 'two', type: 'option', front: 'B ____.', expectedAnswer: 'b', options: ['b', 'c', 'd'] },
+  { id: 'three', type: 'option', front: 'C ____.', expectedAnswer: 'c', options: ['c', 'd', 'e'] }
+];
+const firstReviewPositions = distributeOptionAnswerPositions(optionCards, { startPosition: 0 });
+const secondReviewPositions = distributeOptionAnswerPositions(optionCards, { startPosition: 1 });
+const thirdReviewPositions = distributeOptionAnswerPositions(optionCards, { startPosition: 2 });
+assert.deepEqual(firstReviewPositions.map(card => card.options.indexOf(card.expectedAnswer)), [0, 1, 2]);
+assert.deepEqual(secondReviewPositions.map(card => card.options.indexOf(card.expectedAnswer)), [1, 2, 0]);
+assert.deepEqual(thirdReviewPositions.map(card => card.options.indexOf(card.expectedAnswer)), [2, 0, 1]);
+
+const supplementalPrompt = buildSupplementalFlashcardPrompt({
+  title: 'Memory review',
+  type: 'question',
+  template: { question: 'Explain DRAM.', tasks: [{ referenceAnswer: 'DRAM is dynamic memory.' }] },
+  existingFlashcards: [{ front: 'What is DRAM?', expectedAnswer: 'Dynamic memory' }]
+});
+assert.match(supplementalPrompt, /between 1 and 3/i);
+assert.match(supplementalPrompt, /NOT already explicitly stated/i);
+
+const reviewPrompt = buildFlashcardReviewPrompt({
+  cards: [{ id: 'r1', type: 'option', front: 'DRAM is ____ memory.', expectedAnswer: 'dynamic', options: ['dynamic', 'static', 'read-only'], language: 'en' }],
+  comparisonCards: [{ id: 'r2', front: 'DRAM is ____ memory.', expectedAnswer: 'volatile' }]
+});
+assert.match(reviewPrompt, /too similar/i);
+const reviewed = applyFlashcardReview({ reviews: [{ id: 'r1', changed: true, revisedFront: 'Which memory category describes DRAM: ____?', reason: 'Varied cue.' }] }, [{ id: 'r1', type: 'option', front: 'DRAM is ____ memory.', expectedAnswer: 'dynamic', options: ['dynamic', 'static', 'read-only'], language: 'en' }]);
+assert.equal(reviewed.changedCount, 1);
+assert.match(reviewed.flashcards[0].front, /Which memory category/);
+const similarPairs = findSimilarFlashcardPairs([
+  { id: 's1', type: 'option', front: 'DRAM is a type of ____ memory.' },
+  { id: 's2', type: 'option', front: 'DRAM is a type of ____ memory.' },
+  { id: 's3', type: 'question', front: 'What does DRAM mean?' }
+]);
+assert.equal(similarPairs.length, 1);
+assert.equal(similarPairs[0].leftId, 's1');
+
 
 console.log('Flashcard builder tests passed.');

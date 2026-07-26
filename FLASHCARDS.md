@@ -170,3 +170,59 @@ The validator checks:
 
 Mathematical answer validation is not required for semantic templates. The randomized runs validate structure and generated semantic references, not whether a reference answer is factually correct.
 
+
+## Option ordering and context-safe blanks
+
+Option cards are normalized locally after Gemini generation and after JSON import.
+
+- Correct choices are deliberately distributed across different positions instead of inheriting Gemini's response order.
+- The resulting choice order is stored with the card and remains stable during review.
+- The blank must remove a complete recall unit.
+- When Gemini produces a cue such as `____ (Dynamic Random-Access Memory)` with `DRAM` as the expected answer, Study Forge converts it to `____` and stores `DRAM (Dynamic Random-Access Memory)` as one complete correct option.
+- The same normalization applies when an acronym remains before a blanked expansion, such as `DRAM (____)`.
+- Local validation rejects cards whose visible statement still contains the complete correct answer or one of its parenthetical aliases.
+
+## Enrichment generation
+
+After a set has been generated, **Generate 1–3 extra cards per template** makes a separate Gemini call for every linked semantic template.
+
+These enrichment cards use:
+
+- the exercise question;
+- subject, topic, language, and difficulty metadata;
+- all semantic task labels and grading guidance;
+- the current reference answers;
+- the fronts and answers of cards already in the set.
+
+Gemini is instructed to generate only directly relevant recall targets that are not explicitly stated in the reference answers and do not duplicate existing cards. Each enrichment card receives a private grading reference, template provenance, and a `supplemental` marker.
+
+## Gemini wording review
+
+**Review wording with Gemini** processes every card in batches. Gemini receives the complete set as comparison context and returns one review decision for every card.
+
+The review may rewrite only the card front. After the first pass, Study Forge detects highly similar cue pairs locally and submits those cards for one focused second pass. It cannot change:
+
+- the expected answer;
+- option choices;
+- grading references;
+- source provenance.
+
+Cards are rewritten when repeated sentence structure, near-identical incomplete phrases, or answer leakage could allow recognition from a previous card instead of actual recall. Revised option cards must still contain exactly one blank and pass all local validation rules.
+
+## Importing and editing sets
+
+The Flashcard Builder can import a JSON file containing one flashcard set. It accepts:
+
+- a direct set export;
+- a one-item array containing a set;
+- a Study Forge workspace containing exactly one flashcard set.
+
+Imported cards are normalized and validated before being displayed. In the generated-card preview, an author can:
+
+- delete one card from the current set;
+- delete every card from the current set;
+- save one card independently;
+- update an already saved individual card;
+- save or export the complete set.
+
+Individually saved cards are stored in `savedFlashcards` and appear in the **Saved cards** library tab. Deleting a card from the current set does not delete a separately saved copy. Saved individual cards can be opened as a one-card review set, exported, or deleted from the library.

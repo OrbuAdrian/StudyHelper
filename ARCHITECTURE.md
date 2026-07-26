@@ -208,3 +208,15 @@ Exercises with several independently graded fields use the public type name `mul
 ## Structured flashcard generation
 
 `features/flashcard-builder.js` defines the flashcard response schema, source normalization, phrase coverage, and card-domain validation. `services/gemini-client.js` passes optional response schemas to Gemini and treats token-limit termination as an incomplete response. `core/utils.js` performs JSON extraction and conservative common-format recovery. `features/template-validator.js` validates every semantic task/reference as a potential flashcard source.
+
+## Flashcard authoring pipeline
+
+`assets/js/features/flashcard-builder.js` now also owns:
+
+- complete recall-unit normalization for acronym/expansion cloze cards;
+- local answer-leak detection;
+- stable distribution of correct option positions;
+- supplemental-card prompt and response contracts;
+- full-set wording-review prompt and response contracts.
+
+`assets/js/app.js` coordinates per-template enrichment calls, batched full-set review, set import, current-set editing, and the `savedFlashcards` library collection. Complete sets and individual cards remain separate storage objects.

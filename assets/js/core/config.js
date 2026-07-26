@@ -117,6 +117,7 @@ export function createEmptyState() {
     templates: [],
     quizzes: [],
     flashcardSets: [],
+    savedFlashcards: [],
     flashcardAttempts: [],
     attempts: [],
     quizDraft: [],

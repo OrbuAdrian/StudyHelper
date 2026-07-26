@@ -298,8 +298,11 @@ export function buildFlashcardGenerationPrompt({ title = '', type = 'question', 
 - Several adjacent statements may produce one card when separating them would remove necessary context.`
     : `Create option flashcards only.
 - Rewrite one meaningful statement, or a small group of context-dependent statements, into one self-contained expression containing exactly one blank written as ____.
-- The blank must replace the important word or short phrase to recall.
-- Provide 3 to 5 distinct options with exactly one correct option.
+- The blank must replace the complete recall unit, not only one part of an alias or definition.
+- When a term is immediately followed by its expansion or alias in parentheses, such as DRAM (Dynamic Random-Access Memory), remove both parts from the statement and use the complete form as one option: DRAM (Dynamic Random-Access Memory).
+- Do not leave an acronym, expansion, synonym, parenthetical alias, or grammatical continuation in the statement when it reveals the correct option.
+- Provide 3 to 5 distinct options with exactly one correct option. Keep choices parallel in grammatical and naming form; when the correct choice uses an acronym with its expansion, use comparable complete forms for distractors when practical.
+- Do not always place the correct option first; vary its position.
 - Distractors must be plausible in context but factually incorrect for the blank.
 - A dense statement may produce several flashcards when it contains several independently useful facts.
 - Several adjacent statements may produce one card when separating them would remove necessary context.`;
@@ -330,6 +333,280 @@ Semantic source batch:
 ${JSON.stringify(sourcePayload, null, 2)}`;
 }
 
+
+function replaceCorrectOption(options, previousAnswer, nextAnswer) {
+  const previous = String(previousAnswer || '').trim().toLocaleLowerCase();
+  return (options || []).map(option => String(option).trim().toLocaleLowerCase() === previous ? nextAnswer : option);
+}
+
+function collapseWhitespace(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+export function normalizeOptionClozeContext(card = {}) {
+  if (card.type !== 'option') return card;
+  let front = String(card.front || '').trim();
+  let expectedAnswer = String(card.expectedAnswer || '').trim();
+  let options = Array.isArray(card.options) ? [...card.options] : [];
+
+  // Gemini sometimes blanks only the acronym and leaves the expansion in parentheses.
+  let match = front.match(/____\s*\(([^()]{2,140})\)/);
+  if (match && expectedAnswer && !expectedAnswer.toLocaleLowerCase().includes(match[1].trim().toLocaleLowerCase())) {
+    const combined = `${expectedAnswer} (${collapseWhitespace(match[1])})`;
+    front = front.replace(match[0], '____');
+    options = replaceCorrectOption(options, expectedAnswer, combined);
+    expectedAnswer = combined;
+  }
+
+  // Or it may leave the acronym before a blanked expansion: DRAM (____).
+  match = front.match(/\b([A-Z][A-Z0-9-]{1,15})\s*\(\s*____\s*\)/);
+  if (match && expectedAnswer && !expectedAnswer.toLocaleLowerCase().includes(match[1].toLocaleLowerCase())) {
+    const combined = `${match[1]} (${expectedAnswer})`;
+    front = front.replace(match[0], '____');
+    options = replaceCorrectOption(options, expectedAnswer, combined);
+    expectedAnswer = combined;
+  }
+
+  card.front = collapseWhitespace(front);
+  card.expectedAnswer = collapseWhitespace(expectedAnswer);
+  card.options = options.map(collapseWhitespace);
+  return card;
+}
+
+function answerAliases(answer) {
+  const value = collapseWhitespace(answer);
+  const aliases = new Set([value]);
+  const parenthetical = value.match(/^(.+?)\s*\(([^()]+)\)$/);
+  if (parenthetical) {
+    aliases.add(parenthetical[1].trim());
+    aliases.add(parenthetical[2].trim());
+  }
+  return [...aliases].filter(alias => alias.length >= 3);
+}
+
+export function findOptionAnswerLeak(card = {}) {
+  if (card.type !== 'option') return '';
+  const visible = collapseWhitespace(String(card.front || '').replace(/____/g, ' ')).toLocaleLowerCase();
+  for (const alias of answerAliases(card.expectedAnswer)) {
+    const normalizedAlias = alias.toLocaleLowerCase();
+    if (normalizedAlias.length < 3) continue;
+    const escaped = normalizedAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'iu');
+    if (pattern.test(visible)) return alias;
+  }
+  return '';
+}
+
+function stableCardNumber(card, fallback = 0) {
+  const text = `${card?.id || ''}|${card?.front || ''}|${card?.expectedAnswer || ''}`;
+  let hash = fallback + 1;
+  for (let index = 0; index < text.length; index += 1) hash = ((hash * 31) + text.charCodeAt(index)) >>> 0;
+  return hash;
+}
+
+export function distributeOptionAnswerPositions(flashcards = [], { startPosition = 1 } = {}) {
+  let optionCardIndex = 0;
+  return (flashcards || []).map(card => {
+    if (card?.type !== 'option' || !Array.isArray(card.options) || card.options.length < 2) return card;
+    const answer = String(card.expectedAnswer || '').trim();
+    const answerNormalized = answer.toLocaleLowerCase();
+    const distractors = card.options.filter(option => String(option).trim().toLocaleLowerCase() !== answerNormalized);
+    // Deterministically rotate distractors, then deliberately vary the correct position across the set.
+    if (distractors.length > 1) {
+      const rotation = stableCardNumber(card, optionCardIndex) % distractors.length;
+      distractors.push(...distractors.splice(0, rotation));
+    }
+    const target = (Math.max(0, startPosition) + optionCardIndex) % (distractors.length + 1);
+    const options = [...distractors];
+    options.splice(target, 0, answer);
+    optionCardIndex += 1;
+    return { ...card, options };
+  });
+}
+
+export function createSupplementalFlashcardResponseSchema(type = 'question') {
+  const normalizedType = normalizeFlashcardType(type);
+  const properties = {
+    front: { type: 'string' },
+    expectedAnswer: { type: 'string' },
+    gradingReference: { type: 'string' },
+    explanation: { type: 'string' }
+  };
+  const required = ['front', 'expectedAnswer', 'gradingReference', 'explanation'];
+  if (normalizedType === 'option') {
+    properties.options = { type: 'array', items: { type: 'string' } };
+    required.push('options');
+  }
+  return {
+    type: 'object',
+    properties: {
+      flashcards: {
+        type: 'array',
+        items: { type: 'object', properties, required }
+      }
+    },
+    required: ['flashcards']
+  };
+}
+
+export function buildSupplementalFlashcardPrompt({ title = '', type = 'question', template = {}, existingFlashcards = [] } = {}) {
+  const normalizedType = normalizeFlashcardType(type);
+  const existing = (existingFlashcards || []).map(card => ({ front: card.front, expectedAnswer: card.expectedAnswer }));
+  const optionRules = normalizedType === 'option'
+    ? `Each card must contain exactly one ____ blank and 3 to 5 distinct choices. If an acronym and its expansion form one recall unit, remove both from the statement and keep them together as the correct choice. Keep all choices parallel in grammatical and naming form.`
+    : `Each card must ask a direct question whose expected answer is a few words or a short phrase.`;
+  const optionsLine = normalizedType === 'option' ? '"options": ["...", "...", "..."],\n      ' : '';
+  return `Create between 1 and 3 additional ${normalizedType} flashcards for one semantic exercise template.
+
+These are enrichment cards. Use the exercise question, subject, topic, task labels, grading guidance, and your domain knowledge to cover useful facts that are directly relevant to the exercise but are NOT already explicitly stated in its reference answers and are NOT duplicates of the existing cards.
+
+Return valid JSON only:
+{
+  "flashcards": [
+    {
+      "front": "...",
+      "expectedAnswer": "...",
+      ${optionsLine}"gradingReference": "one concise authoritative statement used for grading",
+      "explanation": "brief explanation"
+    }
+  ]
+}
+
+Rules:
+- Return 1, 2, or 3 cards.
+- Preserve the template language and Romanian diacritics when applicable.
+- Do not restate or merely paraphrase facts already present in the reference answers.
+- Do not duplicate an existing card's recall target.
+- Keep every card atomic and unambiguous.
+- ${optionRules}
+- Do not include Markdown or commentary outside the JSON object.
+
+Set title: ${title || 'Flashcard set'}
+Template context:
+${JSON.stringify(template, null, 2)}
+
+Existing cards to avoid duplicating:
+${JSON.stringify(existing, null, 2)}`;
+}
+
+
+function normalizedCueTokens(front) {
+  return String(front || '')
+    .toLocaleLowerCase()
+    .replace(/____/g, ' blank ')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(token => token.length > 1);
+}
+
+export function findSimilarFlashcardPairs(cards = [], threshold = 0.86) {
+  const prepared = (cards || []).map(card => ({
+    card,
+    normalized: normalizedCueTokens(card.front).join(' '),
+    tokens: new Set(normalizedCueTokens(card.front))
+  }));
+  const pairs = [];
+  for (let left = 0; left < prepared.length; left += 1) {
+    for (let right = left + 1; right < prepared.length; right += 1) {
+      const a = prepared[left];
+      const b = prepared[right];
+      if (a.card.type !== b.card.type) continue;
+      let similarity = a.normalized && a.normalized === b.normalized ? 1 : 0;
+      if (similarity < 1 && a.tokens.size >= 4 && b.tokens.size >= 4) {
+        const intersection = [...a.tokens].filter(token => b.tokens.has(token)).length;
+        const union = new Set([...a.tokens, ...b.tokens]).size;
+        similarity = union ? intersection / union : 0;
+      }
+      if (similarity >= threshold) pairs.push({
+        leftId: a.card.id,
+        rightId: b.card.id,
+        similarity
+      });
+    }
+  }
+  return pairs;
+}
+
+export function createFlashcardReviewResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      reviews: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            changed: { type: 'boolean' },
+            revisedFront: { type: 'string' },
+            reason: { type: 'string' }
+          },
+          required: ['id', 'changed', 'revisedFront', 'reason']
+        }
+      }
+    },
+    required: ['reviews']
+  };
+}
+
+export function buildFlashcardReviewPrompt({ cards = [], comparisonCards = [] } = {}) {
+  const targets = (cards || []).map(card => ({
+    id: card.id,
+    type: card.type,
+    front: card.front,
+    expectedAnswer: card.expectedAnswer,
+    options: card.type === 'option' ? card.options : undefined,
+    language: card.language || 'en'
+  }));
+  const comparison = (comparisonCards || cards || []).map(card => ({ id: card.id, front: card.front, expectedAnswer: card.expectedAnswer }));
+  return `Review every target flashcard for professional active-recall quality and return valid JSON only.
+
+Return:
+{
+  "reviews": [
+    { "id": "card id", "changed": true, "revisedFront": "new front", "reason": "brief reason" }
+  ]
+}
+
+Rules:
+- Return exactly one review entry for every target id.
+- Change only the front text. Never change the expected answer or choices.
+- Rewrite a card when its wording or incomplete phrase is too similar to another card and could let the learner answer from remembered sentence structure rather than knowledge.
+- Vary sentence structure, context, and cue direction while preserving the same factual answer.
+- For option cards, revisedFront must contain exactly one ____ blank and must not reveal the expected answer, acronym expansion, alias, or grammatical continuation.
+- For question cards, keep a direct question and do not include the expected answer in the question.
+- Preserve the language and correct Romanian diacritics.
+- Mark changed=false and repeat the original front when no revision is needed.
+- Do not include Markdown or commentary outside the JSON object.
+
+Target cards:
+${JSON.stringify(targets, null, 2)}
+
+Complete set used for similarity comparison:
+${JSON.stringify(comparison, null, 2)}`;
+}
+
+export function applyFlashcardReview(raw = {}, cards = []) {
+  const reviews = Array.isArray(raw.reviews) ? raw.reviews : [];
+  const byId = new Map(reviews.map(review => [String(review?.id || ''), review]));
+  if (byId.size !== cards.length) throw new Error('Gemini did not return one review result for every flashcard.');
+  let changedCount = 0;
+  const reviewed = cards.map(card => {
+    const review = byId.get(String(card.id || ''));
+    if (!review) throw new Error(`Gemini omitted the review for card ${card.id || card.front}.`);
+    if (!review.changed) return { ...card, reviewReason: String(review.reason || '').trim() };
+    const revised = { ...card, front: String(review.revisedFront || '').trim(), reviewReason: String(review.reason || '').trim() };
+    normalizeOptionClozeContext(revised);
+    validateFlashcard(revised);
+    changedCount += 1;
+    return revised;
+  });
+  return { flashcards: reviewed, changedCount };
+}
+
 export function normalizeGeneratedFlashcard(raw = {}, defaults = {}) {
   const type = normalizeFlashcardType(raw.type || defaults.type);
   const front = String(raw.front || raw.question || raw.statement || '').trim();
@@ -351,8 +628,11 @@ export function normalizeGeneratedFlashcard(raw = {}, defaults = {}) {
     options,
     explanation: String(raw.explanation || '').trim(),
     language,
-    sourceKeys
+    sourceKeys,
+    supplemental: Boolean(raw.supplemental || defaults.supplemental),
+    sourceTemplateIds: Array.isArray(raw.sourceTemplateIds) ? [...new Set(raw.sourceTemplateIds.map(String))] : []
   };
+  normalizeOptionClozeContext(normalized);
   validateFlashcard(normalized);
   return normalized;
 }
@@ -380,6 +660,10 @@ export function validateFlashcard(card) {
   if (answerMatches !== 1) {
     throw new Error('An option flashcard must contain its correct answer exactly once.');
   }
+  const leakedAlias = findOptionAnswerLeak(card);
+  if (leakedAlias) {
+    throw new Error(`An option flashcard reveals part of its correct answer in the statement: ${leakedAlias}.`);
+  }
   return true;
 }
 
@@ -390,7 +674,8 @@ export function normalizeGeneratedFlashcardSet(raw = {}, defaults = {}) {
   const normalizedCards = cards.map((card, index) => normalizeGeneratedFlashcard(card, {
     type,
     language: defaults.language,
-    id: defaults.idFactory ? defaults.idFactory(index) : `card-${index + 1}`
+    id: defaults.idFactory ? defaults.idFactory(index) : `card-${index + 1}`,
+    supplemental: defaults.supplemental
   }));
   if (normalizedCards.some(card => card.type !== type)) {
     throw new Error('Gemini returned a mixture of flashcard types instead of the requested type.');

@@ -285,7 +285,13 @@
               <label class="field-label" for="flashcardSetTitle">Set title</label><input class="input" id="flashcardSetTitle" value="Semantic review" />
               <label class="field-label" for="flashcardType">Flashcard type</label><select class="select" id="flashcardType"><option value="question">Question flashcards</option><option value="option">Option flashcards</option></select>
               <p class="control-help" id="flashcardTypeHelp">Learners type a short answer, which Gemini evaluates against the source context.</p>
-              <button class="button secondary full" id="saveFlashcardSetButton">Save flashcard set</button><div class="divider"></div><button class="button ghost full" id="exportFlashcardsTxtButton">Export set as TXT</button><button class="button ghost full" id="exportFlashcardsJsonButton">Export set as JSON</button>
+              <button class="button secondary full" id="saveFlashcardSetButton">Save flashcard set</button>
+              <button class="button ghost full" id="expandFlashcardsButton">Generate 1–3 extra cards per template</button>
+              <button class="button ghost full" id="reviewFlashcardsButton">Review wording with Gemini</button>
+              <div class="divider"></div>
+              <button class="button ghost full" id="importFlashcardSetButton">Import flashcard set</button><input type="file" id="flashcardSetImportFile" accept=".json,application/json" hidden />
+              <button class="button danger full" id="deleteAllFlashcardsButton">Delete all current cards</button>
+              <div class="divider"></div><button class="button ghost full" id="exportFlashcardsTxtButton">Export set as TXT</button><button class="button ghost full" id="exportFlashcardsJsonButton">Export set as JSON</button>
             </aside>
           </div>
           <article class="panel flashcard-preview-panel">
@@ -296,7 +302,7 @@
 
         <section class="view" id="view-library" data-title="Library" data-eyebrow="Saved work">
           <div class="page-intro"><div><span class="section-kicker">Your browser workspace</span><h2>Review and reuse saved material</h2><p>All items remain on this device until you export or clear them.</p></div><button class="button secondary" id="exportWorkspaceButton">Export workspace</button></div>
-          <div class="tab-row library-tabs" role="tablist"><button class="tab-button active" data-library-tab="summaries">Summaries</button><button class="tab-button" data-library-tab="exercises">Exercises</button><button class="tab-button" data-library-tab="templates">Templates</button><button class="tab-button" data-library-tab="quizzes">Quizzes</button><button class="tab-button" data-library-tab="flashcardSets">Flashcards</button><button class="tab-button" data-library-tab="attempts">Attempts</button></div>
+          <div class="tab-row library-tabs" role="tablist"><button class="tab-button active" data-library-tab="summaries">Summaries</button><button class="tab-button" data-library-tab="exercises">Exercises</button><button class="tab-button" data-library-tab="templates">Templates</button><button class="tab-button" data-library-tab="quizzes">Quizzes</button><button class="tab-button" data-library-tab="flashcardSets">Flashcard sets</button><button class="tab-button" data-library-tab="savedFlashcards">Saved cards</button><button class="tab-button" data-library-tab="attempts">Attempts</button></div>
           <div class="panel library-panel"><div id="libraryContent"></div></div>
         </section>
 

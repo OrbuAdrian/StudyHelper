@@ -7,7 +7,7 @@ Study Forge is a client-only study workspace built with HTML, CSS, and JavaScrip
 Use a local web server because the application loads JavaScript modules and PDF support:
 
 ```bash
-cd study-forge-flashcards
+cd study-forge-flashcard-professional
 python3 -m http.server 8080
 ```
 
@@ -43,7 +43,10 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Quiz blueprints with unlimited problem slots and independent saved-template candidate pools.
 - A Flashcard Builder that uses only saved semantic templates.
 - Question flashcards with Gemini-graded short answers.
-- Option flashcards with one blank, stored choices, and local validation.
+- Option flashcards with one blank, stored choices, local validation, context-safe acronym/expansion blanks, and varied correct-option positions.
+- Per-template enrichment generation that adds 1–3 relevant cards beyond facts already stated in the reference answers.
+- Gemini wording review that rewrites overly similar cues without changing answers or choices.
+- Flashcard-set JSON import, individual and bulk deletion, and an individual-card library.
 - Gemini-controlled splitting and combining of reference-answer phrases according to context.
 - Portable schema-constrained flashcard JSON with schema-free and plain-text compatibility fallbacks, local validation, common-format recovery, and automatic retries.
 - Semantic-template flashcard-readiness validation for single and multiple semantic task references.
@@ -197,7 +200,7 @@ node tests/flashcard-builder.test.mjs
 ## Project structure
 
 ```text
-study-forge-flashcards/
+study-forge-flashcard-professional/
 ├── index.html
 ├── README.md
 ├── ARCHITECTURE.md

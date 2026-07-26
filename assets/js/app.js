@@ -59,17 +59,26 @@ import {
   translateInterface
 } from './core/i18n.js';
 import {
+  applyFlashcardReview,
   attachFlashcardSourceContext,
   buildFlashcardGenerationPrompt,
+  buildFlashcardReviewPrompt,
   buildQuestionFlashcardEvaluationPrompt,
+  buildSupplementalFlashcardPrompt,
   createFlashcardGenerationBatches,
   createFlashcardResponseSchema,
+  createFlashcardReviewResponseSchema,
+  createSupplementalFlashcardResponseSchema,
+  distributeOptionAnswerPositions,
   evaluateOptionFlashcard,
+  findSimilarFlashcardPairs,
+  normalizeGeneratedFlashcard,
   normalizeGeneratedFlashcardSet,
   normalizeQuestionFlashcardEvaluation,
   runFlashcardBatchQueue,
   shouldRetryFlashcardGeneration,
   splitReferenceIntoPhraseUnits,
+  validateFlashcard,
   validateFlashcardSourceCoverage,
   validateSemanticFlashcardSources
 } from './features/flashcard-builder.js';
@@ -165,7 +174,8 @@ function loadState() {
         exercises: Array.isArray(stored.exercises) ? stored.exercises.map(normalizeStoredExercise) : [],
         templates: Array.isArray(stored.templates) ? stored.templates : [],
         quizzes: Array.isArray(stored.quizzes) ? stored.quizzes : [],
-        flashcardSets: Array.isArray(stored.flashcardSets) ? stored.flashcardSets : [],
+        flashcardSets: Array.isArray(stored.flashcardSets) ? stored.flashcardSets.map(normalizeStoredFlashcardSet).filter(Boolean) : [],
+        savedFlashcards: Array.isArray(stored.savedFlashcards) ? stored.savedFlashcards.map(normalizeStoredFlashcard).filter(Boolean) : [],
         flashcardAttempts: Array.isArray(stored.flashcardAttempts) ? stored.flashcardAttempts : [],
         attempts: Array.isArray(stored.attempts) ? stored.attempts : [],
         quizDraft: []
@@ -177,6 +187,7 @@ function loadState() {
       }));
       if (merged.currentExercise) merged.currentExercise = normalizeStoredExercise(merged.currentExercise);
       if (merged.currentFlashcardSet && typeof merged.currentFlashcardSet !== 'object') merged.currentFlashcardSet = null;
+      if (merged.currentFlashcardSet?.flashcards) merged.currentFlashcardSet = normalizeStoredFlashcardSet(merged.currentFlashcardSet);
       if (!merged.settings.rememberApiKey) merged.settings.apiKey = '';
       return merged;
     } catch (error) {
@@ -184,6 +195,36 @@ function loadState() {
       return base;
     }
   }
+
+function normalizeStoredFlashcardSet(set) {
+  if (!set || typeof set !== 'object') return null;
+  const flashcards = Array.isArray(set.flashcards)
+    ? set.flashcards.map(normalizeStoredFlashcard).filter(Boolean)
+    : [];
+  const optionReviewCycle = Number.isFinite(Number(set.optionReviewCycle))
+    ? Math.max(0, Math.trunc(Number(set.optionReviewCycle)))
+    : 0;
+  return {
+    ...set,
+    type: set.type === 'option' ? 'option' : 'question',
+    optionReviewCycle,
+    flashcards
+  };
+}
+
+function normalizeStoredFlashcard(card) {
+  if (!card || typeof card !== 'object') return null;
+  try {
+    return normalizeGeneratedFlashcard(card, {
+      type: card.type || 'question',
+      language: card.language || 'en',
+      id: card.id || uid()
+    });
+  } catch (error) {
+    console.warn('Skipping invalid saved flashcard:', error);
+    return null;
+  }
+}
 
 function normalizeStoredExercise(exercise) {
   if (!exercise || typeof exercise !== 'object') return exercise;
@@ -1490,6 +1531,11 @@ function bindFlashcardControls() {
   els.saveFlashcardSetButton.addEventListener('click', saveCurrentFlashcardSet);
   els.exportFlashcardsTxtButton.addEventListener('click', exportFlashcardsTxt);
   els.exportFlashcardsJsonButton.addEventListener('click', exportFlashcardsJson);
+  els.expandFlashcardsButton.addEventListener('click', expandCurrentFlashcardSet);
+  els.reviewFlashcardsButton.addEventListener('click', reviewCurrentFlashcardSet);
+  els.importFlashcardSetButton.addEventListener('click', () => els.flashcardSetImportFile.click());
+  els.flashcardSetImportFile.addEventListener('change', event => importFlashcardSetFile(event.target.files?.[0]));
+  els.deleteAllFlashcardsButton.addEventListener('click', deleteAllCurrentFlashcards);
   els.flashcardType.addEventListener('change', updateFlashcardTypeHelp);
   els.flashcardSetTitle.addEventListener('input', () => {
     if (state.currentFlashcardSet) state.currentFlashcardSet.title = els.flashcardSetTitle.value;
@@ -1552,6 +1598,7 @@ function buildFlashcardSourceBlocks(templateIds) {
   const byId = new Map(state.templates.map(template => [template.id, template]));
   const sources = [];
   const snapshots = [];
+  const templateContexts = [];
   templateIds.forEach(templateId => {
     const template = byId.get(templateId);
     if (!template) return;
@@ -1599,10 +1646,29 @@ function buildFlashcardSourceBlocks(templateIds) {
       language,
       sourceKeys
     });
+    templateContexts.push({
+      templateId: template.id,
+      templateName: template.name || instance.metadata?.TITLE || 'Semantic template',
+      language,
+      question: instance.question,
+      subject: instance.metadata?.SUBJECT || '',
+      topic: instance.metadata?.TOPIC || '',
+      difficulty: instance.metadata?.DIFFICULTY || 'medium',
+      tasks: tasks.map((task, index) => ({
+        id: task.id || `TASK_${index + 1}`,
+        label: task.label || `Task ${index + 1}`,
+        referenceAnswer: task.semanticConfig?.referenceAnswer || task.answer || '',
+        strictness: task.semanticConfig?.strictness || 'moderate',
+        essentialConcepts: task.semanticConfig?.essentialConcepts || [],
+        supportingConcepts: task.semanticConfig?.supportingConcepts || [],
+        acceptedExpressions: task.semanticConfig?.acceptedExpressions || [],
+        knownIncorrectClaims: task.semanticConfig?.knownIncorrectClaims || []
+      }))
+    });
   });
   if (!sources.length) throw new Error('The selected templates did not produce any semantic reference answers.');
   const validated = validateSemanticFlashcardSources(sources);
-  return { sources: validated.sources, phraseSources: validated.phraseSources, snapshots };
+  return { sources: validated.sources, phraseSources: validated.phraseSources, snapshots, templateContexts };
 }
 
 function limitFlashcardDiagnosticText(value, limit = 30000) {
@@ -1820,7 +1886,7 @@ async function generateFlashcards() {
       }
     });
     normalized.flashcards.forEach(card => {
-      const sourceLanguages = new Set(card.sourceKeys.map(key => phraseByKey.get(key).language));
+      const sourceLanguages = new Set(card.sourceKeys.map(key => phraseByKey.get(key)?.language).filter(Boolean));
       if (sourceLanguages.size === 1) card.language = [...sourceLanguages][0];
     });
     state.currentFlashcardSet = {
@@ -1830,6 +1896,7 @@ async function generateFlashcards() {
       flashcards: normalized.flashcards,
       templateIds,
       sourceSnapshots: snapshots,
+      optionReviewCycle: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1846,25 +1913,283 @@ async function generateFlashcards() {
   }
 }
 
+
+function currentFlashcardContentKey(card) {
+  return `${card?.type || ''}|${normalizeText(card?.front || '')}|${normalizeText(card?.expectedAnswer || '')}`;
+}
+
+function persistCurrentFlashcardSetIfSaved() {
+  const current = state.currentFlashcardSet;
+  if (!current?.id) return;
+  const index = state.flashcardSets.findIndex(item => item.id === current.id);
+  if (index >= 0) {
+    current.updatedAt = new Date().toISOString();
+    state.flashcardSets.splice(index, 1, clone(current));
+  }
+}
+
+async function requestSupplementalFlashcardsForTemplate(set, templateContext) {
+  const prompt = buildSupplementalFlashcardPrompt({
+    title: set.title,
+    type: set.type,
+    template: templateContext,
+    existingFlashcards: set.flashcards
+  });
+  const response = await callGemini(prompt, true, {
+    maxOutputTokens: 3500,
+    responseSchema: createSupplementalFlashcardResponseSchema(set.type),
+    schemaFallback: true,
+    jsonCompatibilityFallback: true,
+    temperature: 0.35
+  });
+  const raw = parseJsonResponse(response);
+  const normalized = normalizeGeneratedFlashcardSet(raw, {
+    title: set.title,
+    type: set.type,
+    language: templateContext.language || 'en',
+    idFactory: () => uid(),
+    supplemental: true
+  });
+  if (normalized.flashcards.length > 3) normalized.flashcards = normalized.flashcards.slice(0, 3);
+  if (!normalized.flashcards.length) throw new Error('Gemini did not return any supplemental flashcards.');
+  return normalized.flashcards.map((card, index) => ({
+    ...card,
+    supplemental: true,
+    sourceTemplateIds: [templateContext.templateId],
+    sourceKeys: [`${templateContext.templateId}:SUPPLEMENTAL:${Date.now()}-${index + 1}`]
+  }));
+}
+
+async function expandCurrentFlashcardSet() {
+  if (!ensureApiKey()) return;
+  const set = state.currentFlashcardSet;
+  if (!set?.flashcards?.length) return toast('Generate flashcards first', 'Create or import a flashcard set before adding enrichment cards.', 'error');
+  const templateIds = (set.templateIds?.length ? set.templateIds : getSelectedFlashcardTemplateIds()).filter(id => state.templates.some(template => template.id === id));
+  if (!templateIds.length) return toast('Semantic templates required', 'This set is not linked to any saved semantic templates.', 'error');
+  setButtonLoading(els.expandFlashcardsButton, true, 'Generating extras…');
+  try {
+    const { templateContexts } = buildFlashcardSourceBlocks(templateIds);
+    const existingKeys = new Set(set.flashcards.map(currentFlashcardContentKey));
+    const added = [];
+    for (let index = 0; index < templateContexts.length; index += 1) {
+      els.flashcardPreview.className = 'loading-state';
+      els.flashcardPreview.innerHTML = `<div><div class="loading-spinner"></div><strong>Generating enrichment cards · ${index + 1}/${templateContexts.length}</strong><p>${escapeHtml(templateContexts[index].templateName)}</p></div>`;
+      const cards = await requestSupplementalFlashcardsForTemplate(set, templateContexts[index]);
+      cards.forEach(card => {
+        const key = currentFlashcardContentKey(card);
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          added.push(card);
+        }
+      });
+    }
+    set.flashcards = [...set.flashcards, ...added];
+    set.updatedAt = new Date().toISOString();
+    persistCurrentFlashcardSetIfSaved();
+    saveState();
+    renderFlashcardPreview();
+    renderLibrary();
+    toast('Enrichment cards added', `${added.length} new card${added.length === 1 ? '' : 's'} were generated from material not already stated in the reference answers.`, 'success');
+  } catch (error) {
+    renderFlashcardPreview();
+    toast('Could not generate extra cards', friendlyApiError(error), 'error');
+  } finally {
+    setButtonLoading(els.expandFlashcardsButton, false);
+  }
+}
+
+async function requestFlashcardReviewBatch(batch, allCards) {
+  const result = await callGemini(buildFlashcardReviewPrompt({ cards: batch, comparisonCards: allCards }), true, {
+    maxOutputTokens: 4500,
+    responseSchema: createFlashcardReviewResponseSchema(),
+    schemaFallback: true,
+    jsonCompatibilityFallback: true,
+    temperature: 0.2
+  });
+  return applyFlashcardReview(parseJsonResponse(result), batch);
+}
+
+async function reviewCurrentFlashcardSet() {
+  if (!ensureApiKey()) return;
+  const set = state.currentFlashcardSet;
+  if (!set?.flashcards?.length) return toast('No flashcards to review', 'Generate or import a flashcard set first.', 'error');
+  setButtonLoading(els.reviewFlashcardsButton, true, 'Reviewing…');
+  try {
+    const allCards = clone(set.flashcards);
+    const reviewed = [];
+    let changedCount = 0;
+    const batchSize = 12;
+    for (let start = 0; start < allCards.length; start += batchSize) {
+      const batch = allCards.slice(start, start + batchSize);
+      els.flashcardPreview.className = 'loading-state';
+      els.flashcardPreview.innerHTML = `<div><div class="loading-spinner"></div><strong>Reviewing card wording · ${Math.min(start + batch.length, allCards.length)}/${allCards.length}</strong><p>Gemini is checking cue similarity, answer leakage, and repeated sentence structure.</p></div>`;
+      const result = await requestFlashcardReviewBatch(batch, allCards);
+      reviewed.push(...result.flashcards);
+      changedCount += result.changedCount;
+    }
+    let finalCards = reviewed;
+    let remainingPairs = findSimilarFlashcardPairs(finalCards);
+    if (remainingPairs.length) {
+      const targetIds = new Set(remainingPairs.flatMap(pair => [pair.leftId, pair.rightId]));
+      const targets = finalCards.filter(card => targetIds.has(card.id));
+      const secondPass = await requestFlashcardReviewBatch(targets, finalCards);
+      const revisedById = new Map(secondPass.flashcards.map(card => [card.id, card]));
+      finalCards = finalCards.map(card => revisedById.get(card.id) || card);
+      changedCount += secondPass.changedCount;
+      remainingPairs = findSimilarFlashcardPairs(finalCards);
+    }
+    set.flashcards = finalCards;
+    set.updatedAt = new Date().toISOString();
+    persistCurrentFlashcardSetIfSaved();
+    saveState();
+    renderFlashcardPreview();
+    renderLibrary();
+    const unresolvedNote = remainingPairs.length ? ` ${remainingPairs.length} highly similar pair${remainingPairs.length === 1 ? '' : 's'} remain and may need manual editing.` : '';
+    toast('Flashcard review complete', changedCount
+      ? `${changedCount} card${changedCount === 1 ? '' : 's'} received more distinct wording.${unresolvedNote}`
+      : `Gemini found no wording changes necessary.${unresolvedNote}`, remainingPairs.length ? 'info' : 'success');
+  } catch (error) {
+    renderFlashcardPreview();
+    toast('Flashcard review failed', friendlyApiError(error), 'error');
+  } finally {
+    setButtonLoading(els.reviewFlashcardsButton, false);
+  }
+}
+
+function resolveImportedFlashcardSet(parsed) {
+  const payload = parsed?.data || parsed;
+  if (payload?.flashcards && Array.isArray(payload.flashcards)) return payload;
+  if (Array.isArray(payload?.flashcardSets) && payload.flashcardSets.length === 1) return payload.flashcardSets[0];
+  if (Array.isArray(payload) && payload.length === 1 && Array.isArray(payload[0]?.flashcards)) return payload[0];
+  throw new Error('Select a JSON export containing one flashcard set.');
+}
+
+async function importFlashcardSetFile(file) {
+  if (!file) return;
+  try {
+    const rawSet = resolveImportedFlashcardSet(JSON.parse(await file.text()));
+    const detectedType = rawSet.type || rawSet.flashcards?.[0]?.type || 'question';
+    const normalized = normalizeGeneratedFlashcardSet(rawSet, {
+      title: rawSet.title || file.name.replace(/\.json$/i, ''),
+      type: detectedType,
+      language: rawSet.flashcards?.[0]?.language || state.settings.contentLanguage || 'en',
+      idFactory: () => uid()
+    });
+    const importedCards = normalized.flashcards.map(card => ({ ...card, id: card.id || uid() }));
+    state.currentFlashcardSet = {
+      ...rawSet,
+      id: uid(),
+      title: normalized.title,
+      type: normalized.type,
+      flashcards: importedCards,
+      optionReviewCycle: Number.isFinite(Number(rawSet.optionReviewCycle)) ? Math.max(0, Math.trunc(Number(rawSet.optionReviewCycle))) : 0,
+      templateIds: Array.isArray(rawSet.templateIds) ? rawSet.templateIds : [],
+      importedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    els.flashcardSetTitle.value = state.currentFlashcardSet.title;
+    els.flashcardType.value = state.currentFlashcardSet.type;
+    saveState();
+    renderFlashcardBuilder();
+    toast('Flashcard set imported', `${importedCards.length} card${importedCards.length === 1 ? '' : 's'} loaded for review and editing.`, 'success');
+  } catch (error) {
+    toast('Flashcard import failed', error.message || 'The selected file is not a valid flashcard set.', 'error');
+  } finally {
+    els.flashcardSetImportFile.value = '';
+  }
+}
+
+function removeFlashcardFromCurrentSet(cardId) {
+  const set = state.currentFlashcardSet;
+  if (!set?.flashcards) return;
+  set.flashcards = set.flashcards.filter(card => card.id !== cardId);
+  set.updatedAt = new Date().toISOString();
+  persistCurrentFlashcardSetIfSaved();
+  saveState();
+  renderFlashcardPreview();
+  renderLibrary();
+  renderStats();
+}
+
+function deleteAllCurrentFlashcards() {
+  const set = state.currentFlashcardSet;
+  if (!set?.flashcards?.length) return;
+  confirmAction('Delete all current flashcards?', 'Every card will be removed from the current set. Individually saved cards remain in the library.', () => {
+    set.flashcards = [];
+    set.updatedAt = new Date().toISOString();
+    persistCurrentFlashcardSetIfSaved();
+    saveState();
+    renderFlashcardPreview();
+    renderLibrary();
+    renderStats();
+    toast('Current flashcards deleted', 'The current set no longer contains any cards.', 'success');
+  });
+}
+
+function saveIndividualFlashcard(cardId) {
+  const set = state.currentFlashcardSet;
+  const card = set?.flashcards?.find(item => item.id === cardId);
+  if (!card) return;
+  const saved = {
+    ...clone(card),
+    id: card.id || uid(),
+    setTitle: set.title || 'Flashcard set',
+    savedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const existing = state.savedFlashcards.findIndex(item => item.id === saved.id);
+  if (existing >= 0) state.savedFlashcards.splice(existing, 1, saved);
+  else state.savedFlashcards.unshift(saved);
+  saveState();
+  renderFlashcardPreview();
+  renderLibrary();
+  renderStats();
+  toast('Flashcard saved', 'This card is now available individually in the library.', 'success');
+}
+
 function renderFlashcardPreview() {
   const set = state.currentFlashcardSet;
   const cards = set?.flashcards || [];
   els.flashcardGeneratedCount.textContent = cards.length;
   const enabled = cards.length > 0;
-  [els.startFlashcardsButton, els.saveFlashcardSetButton, els.exportFlashcardsTxtButton, els.exportFlashcardsJsonButton].forEach(button => { button.disabled = !enabled; });
+  [
+    els.startFlashcardsButton,
+    els.saveFlashcardSetButton,
+    els.exportFlashcardsTxtButton,
+    els.exportFlashcardsJsonButton,
+    els.expandFlashcardsButton,
+    els.reviewFlashcardsButton,
+    els.deleteAllFlashcardsButton
+  ].forEach(button => { if (button) button.disabled = !enabled; });
   if (!enabled) {
     els.flashcardPreview.className = 'empty-state';
-    els.flashcardPreview.innerHTML = '<span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates and generate a question or option flashcard set.</p>';
+    els.flashcardPreview.innerHTML = '<span>◇</span><strong>No flashcards generated</strong><p>Select semantic templates, generate cards, or import a flashcard set.</p>';
     return;
   }
+  const savedIds = new Set((state.savedFlashcards || []).map(card => card.id));
   els.flashcardPreview.className = 'flashcard-preview-grid';
   els.flashcardPreview.innerHTML = cards.map((card, index) => {
     const sourceCount = card.sourceKeys?.length || 0;
     const body = card.type === 'option'
-      ? `<div class="flashcard-option-preview">${card.options.map(option => `<span class="${normalizeText(option) === normalizeText(card.expectedAnswer) ? 'correct-option' : ''}">${escapeHtml(option)}</span>`).join('')}</div>`
+      ? `<div class="flashcard-option-preview">${card.options.map((option, optionIndex) => `<span class="${normalizeText(option) === normalizeText(card.expectedAnswer) ? 'correct-option' : ''}"><b>${String.fromCharCode(65 + optionIndex)}.</b> ${escapeHtml(option)}</span>`).join('')}</div>`
       : `<div class="flashcard-preview-answer"><span>Expected short answer</span><strong>${escapeHtml(card.expectedAnswer)}</strong></div>`;
-    return `<article class="flashcard-preview-card"><div class="flashcard-preview-meta"><span>${index + 1}</span><b>${card.type === 'option' ? 'Option' : 'Question'}</b><small>${escapeHtml(getLanguageName(card.language || 'en', state.settings.uiLanguage))}</small></div><h4>${escapeHtml(card.front)}</h4>${body}<p>${escapeHtml(card.explanation || '')}</p><footer>${escapeHtml(t('sourceBlocksCount', state.settings.uiLanguage, { count: sourceCount }))}</footer></article>`;
+    const badges = [
+      card.supplemental ? '<span class="context-chip">Enrichment</span>' : '',
+      savedIds.has(card.id) ? '<span class="context-chip success">Saved individually</span>' : ''
+    ].filter(Boolean).join('');
+    return `<article class="flashcard-preview-card" data-flashcard-id="${escapeAttr(card.id)}">
+      <div class="flashcard-preview-meta"><span>${index + 1}</span><b>${card.type === 'option' ? 'Option' : 'Question'}</b><small>${escapeHtml(getLanguageName(card.language || 'en', state.settings.uiLanguage))}</small></div>
+      ${badges ? `<div class="flashcard-preview-badges">${badges}</div>` : ''}
+      <h4>${escapeHtml(card.front)}</h4>${body}<p>${escapeHtml(card.explanation || '')}</p>
+      <footer><span>${escapeHtml(t('sourceBlocksCount', state.settings.uiLanguage, { count: sourceCount }))}</span><div class="flashcard-card-actions"><button class="button ghost small" data-flashcard-action="save-card" data-id="${escapeAttr(card.id)}">${savedIds.has(card.id) ? 'Update saved card' : 'Save card'}</button><button class="button danger small" data-flashcard-action="delete-card" data-id="${escapeAttr(card.id)}">Delete</button></div></footer>
+    </article>`;
   }).join('');
+  els.flashcardPreview.querySelectorAll('[data-flashcard-action]').forEach(button => button.addEventListener('click', () => {
+    const id = button.dataset.id;
+    if (button.dataset.flashcardAction === 'save-card') saveIndividualFlashcard(id);
+    if (button.dataset.flashcardAction === 'delete-card') confirmAction('Delete this flashcard?', 'The card will be removed from the current set.', () => removeFlashcardFromCurrentSet(id));
+  }));
 }
 
 function saveCurrentFlashcardSet() {
@@ -1908,10 +2233,25 @@ function exportFlashcardsJson() {
 function startFlashcardReview() {
   const set = state.currentFlashcardSet;
   if (!set?.flashcards?.length) return toast('Generate flashcards first', 'There is no flashcard set to review.', 'error');
+
+  const optionReviewCycle = Number.isFinite(Number(set.optionReviewCycle))
+    ? Math.max(0, Math.trunc(Number(set.optionReviewCycle)))
+    : 0;
+  const reviewCards = distributeOptionAnswerPositions(clone(set.flashcards), {
+    startPosition: optionReviewCycle
+  });
+
+  // Advance the option position for the next review of this set. The stored card
+  // content remains unchanged; only the active review session receives the cycled order.
+  set.optionReviewCycle = optionReviewCycle + 1;
+  set.updatedAt = new Date().toISOString();
+  persistCurrentFlashcardSetIfSaved();
+  saveState();
+
   flashcardSession = {
-    set: clone(set),
+    set: { ...clone(set), flashcards: reviewCards },
     index: 0,
-    responses: set.flashcards.map(() => ({ answer: '', result: null })),
+    responses: reviewCards.map(() => ({ answer: '', result: null })),
     awaitingNext: false,
     completed: false
   };
@@ -2170,7 +2510,7 @@ function bindLibraryControls() {
 function renderLibrary() {
     const data = state[activeLibraryTab] || [];
     if (!data.length) {
-      const emptyLabel = ({ summaries: 'summaries', exercises: 'exercises', templates: 'templates', quizzes: 'quizzes', flashcardSets: 'flashcard sets', attempts: 'attempts' })[activeLibraryTab] || activeLibraryTab;
+      const emptyLabel = ({ summaries: 'summaries', exercises: 'exercises', templates: 'templates', quizzes: 'quizzes', flashcardSets: 'flashcard sets', savedFlashcards: 'individual flashcards', attempts: 'attempts' })[activeLibraryTab] || activeLibraryTab;
       els.libraryContent.innerHTML = `<div class="empty-state"><span>▣</span><strong>No ${escapeHtml(emptyLabel)} saved</strong><p>Items you save will appear here and remain available in this browser.</p></div>`;
       return;
     }
@@ -2179,22 +2519,23 @@ function renderLibrary() {
   }
 
 function renderLibraryCard(item, type) {
-    const date = formatDate(item.createdAt || item.updatedAt || item.completedAt); const title = item.title || item.name || item.quizTitle || 'Untitled';
-    const singular = { summaries: 'summary', exercises: 'exercise', templates: 'template', quizzes: 'quiz', flashcardSets: 'flashcard set', attempts: 'attempt' }[type] || type;
+    const date = formatDate(item.createdAt || item.savedAt || item.updatedAt || item.completedAt); const title = type === 'savedFlashcards' ? truncate(item.front || 'Flashcard', 90) : (item.title || item.name || item.quizTitle || 'Untitled');
+    const singular = { summaries: 'summary', exercises: 'exercise', templates: 'template', quizzes: 'quiz', flashcardSets: 'flashcard set', savedFlashcards: 'flashcard', attempts: 'attempt' }[type] || type;
     let description = '';
     if (type === 'summaries') description = stripMarkdown(item.content || '');
     if (type === 'exercises') description = item.question || '';
     if (type === 'templates') description = item.text || '';
     if (type === 'quizzes') description = `${item.problems?.length || item.exercises?.length || 0} problems · randomized candidates · ${humanizeType(item.feedbackTiming || '')} feedback`;
     if (type === 'flashcardSets') description = `${item.flashcards?.length || 0} cards · ${item.type === 'option' ? 'option completion' : 'Gemini-graded questions'}`;
+    if (type === 'savedFlashcards') description = `${item.type === 'option' ? 'Option completion' : 'Gemini-graded question'} · Answer: ${item.expectedAnswer || ''}${item.setTitle ? ` · From ${item.setTitle}` : ''}`;
     if (type === 'attempts') { const graded = item.graded ?? item.total; const ungradable = item.ungradable || 0; description = `Score: ${item.score}/${graded} graded${ungradable ? ` · ${ungradable} ungradable` : ''}${graded ? ` (${Math.round((item.score / graded) * 100)}%)` : ''}`; }
     return `<article class="library-card"><span class="meta-pill">${escapeHtml(singular)}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p><div class="library-card-footer"><span>${escapeHtml(date)}</span><div class="library-card-actions"><button data-library-action="open" data-id="${escapeAttr(item.id)}">Open</button><button data-library-action="export" data-id="${escapeAttr(item.id)}">Export</button><button data-library-action="delete" data-id="${escapeAttr(item.id)}">Delete</button></div></div></article>`;
   }
 
 function handleLibraryAction(action, id, type) {
     const collection = state[type]; const item = collection.find(entry => entry.id === id); if (!item) return;
-    if (action === 'delete') return confirmAction('Delete saved item?', 'This item will be removed from the local browser library.', () => { state[type] = collection.filter(entry => entry.id !== id); saveState(); renderLibrary(); renderRecentWork(); });
-    if (action === 'export') return downloadJson(`${slugify(item.title || item.name || item.quizTitle || type)}.json`, item);
+    if (action === 'delete') return confirmAction('Delete saved item?', 'This item will be removed from the local browser library.', () => { state[type] = collection.filter(entry => entry.id !== id); saveState(); renderLibrary(); renderRecentWork(); renderStats(); if (type === 'savedFlashcards') renderFlashcardPreview(); });
+    if (action === 'export') return downloadJson(`${slugify(item.title || item.name || item.quizTitle || item.front || type)}.json`, item);
     if (action === 'open') openLibraryItem(item, type);
   }
 
@@ -2216,6 +2557,19 @@ function openLibraryItem(item, type) {
       els.flashcardTemplatePool.innerHTML = '';
       renderFlashcardBuilder();
       navigateTo('flashcards');
+    } else if (type === 'savedFlashcards') {
+      state.currentFlashcardSet = {
+        id: uid(),
+        title: item.setTitle || 'Saved flashcard',
+        type: item.type || 'question',
+        flashcards: [clone(item)],
+        templateIds: item.sourceTemplateIds || [],
+        optionReviewCycle: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      renderFlashcardBuilder();
+      navigateTo('flashcards');
     } else if (type === 'attempts') toast('Attempt result', `${item.quizTitle}: ${item.score}/${item.graded ?? item.total} graded answers correct${item.ungradable ? `; ${item.ungradable} ungradable` : ''}.`, 'info');
   }
 
@@ -2233,7 +2587,7 @@ function bindSettingsControls() {
     els.importWorkspaceButton.addEventListener('click', () => els.workspaceImportFile.click());
     els.workspaceImportFile.addEventListener('change', event => importWorkspace(event.target.files?.[0]));
     els.settingsExportWorkspaceButton.addEventListener('click', exportWorkspace);
-    els.clearWorkspaceButton.addEventListener('click', () => confirmAction('Clear the entire workspace?', 'Saved summaries, exercises, templates, quizzes, flashcard sets, attempts, and settings will be deleted from this browser.', () => {
+    els.clearWorkspaceButton.addEventListener('click', () => confirmAction('Clear the entire workspace?', 'Saved summaries, exercises, templates, quizzes, flashcard sets, individual flashcards, attempts, and settings will be deleted from this browser.', () => {
       localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem(SESSION_KEY); state = createEmptyState(); applyStoredStateToUI(); renderAll(); toast('Workspace cleared', 'All local Study Forge data was removed.', 'success');
     }));
   }
@@ -2327,7 +2681,7 @@ function renderApiStatus(forced) {
     els.settingsApiBadge.className = `status-badge ${connected ? 'connected' : 'disconnected'}`;
     els.settingsApiBadge.textContent = connected ? t('configured', state.settings.uiLanguage) : t('notConnected', state.settings.uiLanguage);
   }
-function renderStats() { els.summaryCount.textContent = state.summaries.length; els.exerciseCount.textContent = state.exercises.length; els.templateCount.textContent = state.templates.length; els.attemptCount.textContent = state.attempts.length; els.quizNavCount.textContent = state.quizDraft.length; els.flashcardSetCount.textContent = state.flashcardSets.length; els.flashcardNavCount.textContent = state.flashcardSets.length; }
+function renderStats() { els.summaryCount.textContent = state.summaries.length; els.exerciseCount.textContent = state.exercises.length; els.templateCount.textContent = state.templates.length; els.attemptCount.textContent = state.attempts.length; els.quizNavCount.textContent = state.quizDraft.length; els.flashcardSetCount.textContent = state.flashcardSets.length; els.flashcardNavCount.textContent = state.flashcardSets.length + (state.savedFlashcards?.length || 0); }
 
 function renderRecentWork() {
     const items = [...state.summaries.map(item => ({ ...item, _type: 'Summary', _date: item.createdAt })), ...state.exercises.map(item => ({ ...item, _type: 'Exercise', _date: item.createdAt })), ...state.templates.map(item => ({ ...item, _type: 'Template', _date: item.updatedAt })), ...state.flashcardSets.map(item => ({ ...item, _type: 'Flashcards', _date: item.updatedAt || item.createdAt }))].sort((a, b) => new Date(b._date) - new Date(a._date)).slice(0, 4);
@@ -2438,7 +2792,7 @@ function exportWorkspace() {
     const exported = clone(state);
     exported.settings.apiKey = '';
     downloadJson(`study-forge-workspace-${new Date().toISOString().slice(0, 10)}.json`, {
-      app: 'Study Forge', version: 6, exportedAt: new Date().toISOString(), data: exported
+      app: 'Study Forge', version: 7, exportedAt: new Date().toISOString(), data: exported
     });
     toast('Workspace exported', 'Your study data was saved without the Gemini API key.', 'success');
   }
@@ -2460,12 +2814,14 @@ async function importWorkspace(file) {
         exercises: Array.isArray(incoming.exercises) ? incoming.exercises.map(normalizeStoredExercise) : [],
         templates: Array.isArray(incoming.templates) ? incoming.templates : [],
         quizzes: Array.isArray(incoming.quizzes) ? incoming.quizzes : [],
-        flashcardSets: Array.isArray(incoming.flashcardSets) ? incoming.flashcardSets : [],
+        flashcardSets: Array.isArray(incoming.flashcardSets) ? incoming.flashcardSets.map(normalizeStoredFlashcardSet).filter(Boolean) : [],
+        savedFlashcards: Array.isArray(incoming.savedFlashcards) ? incoming.savedFlashcards.map(normalizeStoredFlashcard).filter(Boolean) : [],
         flashcardAttempts: Array.isArray(incoming.flashcardAttempts) ? incoming.flashcardAttempts : [],
         attempts: Array.isArray(incoming.attempts) ? incoming.attempts : [],
         quizDraft: []
       };
       if (state.currentExercise) state.currentExercise = normalizeStoredExercise(state.currentExercise);
+      if (state.currentFlashcardSet?.flashcards) state.currentFlashcardSet = normalizeStoredFlashcardSet(state.currentFlashcardSet);
       state.quizDraft = normalizeQuizProblems(incoming.quizDraft || [], state.templates, state.exercises);
       state.quizzes = state.quizzes.map(quiz => ({
         ...quiz,
