@@ -204,3 +204,7 @@ CSS is loaded in dependency order:
 Template-generated choice questions use `TYPE: multiple-choice` and `## Choices`. The template engine resolves the correct expression and distractor expressions after definitions, mappings, collections, formulas, and constraints. It rejects duplicate concrete options and shuffles valid options with the same seeded random stream used for the exercise instance.
 
 Exercises with several independently graded fields use the public type name `multiple-tasks`. Fields may be deterministic or semantic; semantic task items carry their own reference answer, strictness, and private guidance. Legacy `multiple-answer` and `multi-answer` values are normalized during parsing and state loading so older browser data remains usable.
+
+## Structured flashcard generation
+
+`features/flashcard-builder.js` defines the flashcard response schema, source normalization, phrase coverage, and card-domain validation. `services/gemini-client.js` passes optional response schemas to Gemini and treats token-limit termination as an incomplete response. `core/utils.js` performs JSON extraction and conservative common-format recovery. `features/template-validator.js` validates every semantic task/reference as a potential flashcard source.

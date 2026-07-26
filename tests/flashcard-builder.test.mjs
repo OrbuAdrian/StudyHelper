@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import {
   buildFlashcardGenerationPrompt,
+  attachFlashcardSourceContext,
   buildQuestionFlashcardEvaluationPrompt,
+  createFlashcardGenerationBatches,
+  createFlashcardResponseSchema,
   evaluateOptionFlashcard,
   normalizeGeneratedFlashcardSet,
   normalizeQuestionFlashcardEvaluation,
+  runFlashcardBatchQueue,
+  splitFlashcardGenerationBatch,
   splitReferenceIntoPhraseUnits,
+  validateSemanticFlashcardSources,
   validateFlashcardSourceCoverage
 } from '../assets/js/features/flashcard-builder.js';
 
@@ -102,5 +108,88 @@ assert.throws(() => normalizeGeneratedFlashcardSet({ flashcards: [{
   expectedAnswer: 'answer',
   options: ['answer', 'Answer', 'other']
 }] }, { type: 'option' }), /duplicate options/);
+
+
+
+const schema = createFlashcardResponseSchema('option', ['source-a:P1', 'source-a:P2']);
+assert.equal(Object.hasOwn(schema, 'additionalProperties'), false);
+assert.equal(Object.hasOwn(schema.properties.flashcards.items, 'additionalProperties'), false);
+assert.equal(Object.hasOwn(schema.properties.flashcards.items.properties.options, 'minItems'), false);
+assert.equal(Object.hasOwn(schema.properties.flashcards.items.properties.sourceKeys.items, 'enum'), false);
+assert.equal(schema.properties.flashcards.items.required.includes('options'), true);
+const questionSchema = createFlashcardResponseSchema('question', ['source-a:P1']);
+assert.equal(Object.hasOwn(questionSchema.properties.flashcards.items.properties, 'options'), false);
+
+
+const batched = createFlashcardGenerationBatches([{
+  sourceKey: 'long:TASK',
+  question: 'Explain the topic.',
+  taskLabel: 'Long task',
+  referenceAnswer: 'One. Two. Three. Four. Five.',
+  language: 'en'
+}], { maxPhrases: 2, maxCharacters: 1000 });
+assert.equal(batched.batches.length, 3);
+assert.deepEqual(batched.batches.map(batch => batch.phraseSources.length), [2, 2, 1]);
+const splitBatch = splitFlashcardGenerationBatch(batched.batches[0]);
+assert.equal(splitBatch.length, 2);
+assert.deepEqual(splitBatch.map(batch => batch.phraseSources.length), [1, 1]);
+
+let queueCalls = 0;
+const queueResult = await runFlashcardBatchQueue([batched.batches[0]], async batch => {
+  queueCalls += 1;
+  if (batch.phraseSources.length > 1) throw new Error('The AI response was incomplete or malformed JSON.');
+  return [{ sourceKeys: batch.phraseSources.map(item => item.sourceKey) }];
+});
+assert.equal(queueCalls, 3);
+assert.equal(queueResult.total, 2);
+assert.equal(queueResult.results.length, 2);
+
+const attached = attachFlashcardSourceContext([{
+  type: 'question',
+  front: 'Question?',
+  expectedAnswer: 'Answer',
+  gradingReference: 'Answer',
+  options: [],
+  explanation: '',
+  language: 'en',
+  sourceKeys: ['long:TASK:P1', 'long:TASK:P2']
+}], batched.phraseSources);
+assert.match(attached.flashcards[0].gradingReference, /One\. Two\./);
+
+const validatedSources = validateSemanticFlashcardSources([{
+  sourceKey: 'template:TASK_A',
+  question: 'Question A?',
+  taskLabel: 'Task A',
+  referenceAnswer: 'First reference statement. Second reference statement.',
+  language: 'en'
+}, {
+  sourceKey: 'template:TASK_B',
+  question: 'Question B?',
+  taskLabel: 'Task B',
+  referenceAnswer: 'A separate task reference.',
+  language: 'en'
+}]);
+assert.equal(validatedSources.sources.length, 2);
+assert.equal(validatedSources.phraseSources.length, 3);
+assert.throws(() => validateSemanticFlashcardSources([{
+  sourceKey: 'template:TASK_A',
+  question: 'Question?',
+  referenceAnswer: 'Unresolved {VALUE}.'
+}]), /unresolved placeholder/i);
+
+
+
+let preservedDiagnostics = null;
+try {
+  await runFlashcardBatchQueue([batched.batches[2]], async () => {
+    const error = new Error('Request contains an invalid argument.');
+    error.flashcardDiagnostics = { batchLabel: 'Long task', parsedSources: [{ sourceKey: 'long:TASK' }] };
+    throw error;
+  });
+} catch (error) {
+  preservedDiagnostics = error.flashcardDiagnostics;
+  assert.match(error.message, /Long task/);
+}
+assert.equal(preservedDiagnostics?.parsedSources?.[0]?.sourceKey, 'long:TASK');
 
 console.log('Flashcard builder tests passed.');

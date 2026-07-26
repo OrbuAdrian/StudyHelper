@@ -43,7 +43,7 @@ assert.match(app, /score:\s*correct[\s\S]*graded,[\s\S]*ungradable/);
 
 assert.match(app, /candidateTemplateIds/);
 assert.match(app, /instantiateTemplate/);
-assert.match(app, /Numeric randomized validation is not required/);
+assert.match(app, /semanticValidationMeta/);
 assert.match(app, /multiple-tasks/);
 assert.match(app, /options:\s*result\.options\s*\|\|\s*\[\]/);
 assert.match(config, /MULTIPLE_CHOICE_TEMPLATE_EXAMPLE/);

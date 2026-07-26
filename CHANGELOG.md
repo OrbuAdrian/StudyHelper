@@ -1,5 +1,38 @@
 # Changelog
 
+## Flashcard request compatibility and author diagnostics
+
+- Reduced the Gemini flashcard response schema to the smallest portable subset: `type`, `properties`, `required`, and `items`.
+- Added fallback for generic HTTP 400 `INVALID_ARGUMENT` responses even when the API does not explicitly identify `responseSchema` as the rejected field.
+- Added a final plain-text JSON-prompt fallback when a selected model rejects both response schemas and JSON MIME mode.
+- Preserved per-call diagnostics for schema, JSON MIME, and plain-text fallback attempts without recording the API key.
+- Added author-side failure reports showing parsed semantic questions, full reference answers, phrase units, API statuses, raw Gemini responses, and any flashcards parsed before failure.
+- Preserved diagnostic data when a batch failure is wrapped by the adaptive queue.
+- Added a regression fixture for a Romanian three-task compiler-optimization semantic template.
+- Added generic `INVALID_ARGUMENT`, plain-text fallback, and diagnostic-preservation tests.
+
+## Flashcard schema compatibility and batched generation
+
+- Removed unsupported `additionalProperties` and `propertyOrdering` keywords from the Gemini flashcard response schema.
+- Added automatic JSON-mode fallback when a selected Gemini model rejects `responseSchema`.
+- Changed flashcard generation from one large request to sequential per-source phrase batches.
+- Added adaptive batch splitting after repeated malformed, incomplete, truncated, or invalid responses.
+- Reduced generated JSON by deriving title, type, language, and private grading references locally.
+- Added batch progress reporting, cross-batch deduplication, and final source-coverage validation.
+- Added schema-fallback, batching, adaptive-splitting, and source-context regression tests.
+
+## Flashcard structured-output repair and semantic-source validation
+
+- Added Gemini JSON-schema output constraints for question and option flashcard sets.
+- Added a conservative malformed-JSON recovery pass for common missing commas and trailing commas.
+- Added one automatic regeneration attempt when Gemini returns malformed, incomplete, truncated, or semantically invalid flashcard data.
+- Increased the flashcard structured-output budget and report `MAX_TOKENS` truncation explicitly.
+- Added semantic flashcard-source validation before any Gemini request.
+- Updated the Template Engine validator so semantic templates run randomized structural, reference-answer, phrase-segmentation, placeholder, and seed checks.
+- Added separate validation for every task in `## Semantic Answers`.
+- Added errors for duplicate semantic fields, unsupported semantic field names, empty references, duplicate source identifiers, and unresolved reference placeholders.
+- Added structured-output, JSON-recovery, and multi-reference regression tests.
+
 ## Flashcard Builder
 
 - Added a dedicated Flashcard Builder beside Quiz Builder.

@@ -37,7 +37,19 @@ const ui = {
     flashcardGradedScore: ({ correct, graded, ungradable }) => `${correct} of ${graded} graded cards correct${ungradable ? ` · ${ungradable} ungradable` : ''}`,
     flashcardPercentage: ({ percentage }) => `You recalled ${percentage}% of the gradable cards.`,
     flashcardNoGraded: 'No cards could be graded in this review.',
-    expectedAnswerLabel: 'Expected answer'
+    expectedAnswerLabel: 'Expected answer',
+    semanticTemplateReadyTitle: 'Semantic template ready',
+    semanticTemplateAttentionTitle: 'Semantic template needs attention',
+    semanticTemplateReadyStatus: 'Semantic template is ready',
+    semanticTemplateWarningStatus: 'Semantic template valid with warnings',
+    semanticTemplateErrorStatus: 'Semantic template has blocking errors',
+    semanticValidationPassed: ({ successes, warnings }) => `${successes} semantic instances passed reference-answer and flashcard-source checks${warnings ? ` with ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}.`,
+    semanticValidationFailed: ({ errors }) => `${errors} blocking semantic-template error${errors === 1 ? '' : 's'} found.`,
+    semanticValidationMeta: ({ errors, warnings }) => `${errors} errors · ${warnings} warnings · mathematical answer validation not required`,
+    semanticTestsCount: ({ successes, requested }) => `${successes}/${requested} semantic tests`,
+    semanticTasksLabel: 'Semantic tasks',
+    referencePhrasesLabel: 'Reference phrases',
+    semanticValidationClean: 'Reference answers, semantic tasks, phrase units, placeholders, and seeded instances are valid for exercises and flashcard generation.'
   },
   ro: {
     ungradable: 'Neevaluabil',
@@ -72,7 +84,19 @@ const ui = {
     flashcardGradedScore: ({ correct, graded, ungradable }) => `${correct} din ${graded} carduri evaluabile corecte${ungradable ? ` · ${ungradable} neevaluabile` : ''}`,
     flashcardPercentage: ({ percentage }) => `Ai reținut corect ${percentage}% dintre cardurile evaluabile.`,
     flashcardNoGraded: 'Niciun card nu a putut fi evaluat în această recapitulare.',
-    expectedAnswerLabel: 'Răspuns așteptat'
+    expectedAnswerLabel: 'Răspuns așteptat',
+    semanticTemplateReadyTitle: 'Șablon semantic pregătit',
+    semanticTemplateAttentionTitle: 'Șablonul semantic necesită corecturi',
+    semanticTemplateReadyStatus: 'Șablonul semantic este pregătit',
+    semanticTemplateWarningStatus: 'Șablon semantic valid cu avertismente',
+    semanticTemplateErrorStatus: 'Șablonul semantic are erori blocante',
+    semanticValidationPassed: ({ successes, warnings }) => `${successes} instanțe semantice au trecut verificările răspunsurilor de referință și ale surselor pentru carduri${warnings ? ` cu ${warnings} avertisment${warnings === 1 ? '' : 'e'}` : ''}.`,
+    semanticValidationFailed: ({ errors }) => `Au fost găsite ${errors} erori blocante ale șablonului semantic.`,
+    semanticValidationMeta: ({ errors, warnings }) => `${errors} erori · ${warnings} avertismente · validarea matematică a răspunsului nu este necesară`,
+    semanticTestsCount: ({ successes, requested }) => `${successes}/${requested} teste semantice`,
+    semanticTasksLabel: 'Sarcini semantice',
+    referencePhrasesLabel: 'Fraze de referință',
+    semanticValidationClean: 'Răspunsurile de referință, sarcinile semantice, unitățile de frază, substituenții și instanțele cu seed sunt valide pentru exerciții și generarea cardurilor.'
   }
 };
 

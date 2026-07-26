@@ -963,15 +963,26 @@ function parseSemanticAnswerSection(text) {
   const result = {};
   let currentKey = null;
   let blockMode = false;
+
   for (const rawLine of String(text).replace(/\r\n?/g, '\n').split('\n')) {
     const line = rawLine.trim();
-    const match = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
-    if (match && SEMANTIC_ANSWER_FIELDS.has(match[1].toUpperCase())) {
-      currentKey = match[1].toUpperCase();
-      blockMode = match[2].trim() === '|';
-      result[currentKey] = blockMode ? '' : match[2].trim();
+    const fieldMatch = line.match(/^([A-Z][A-Z0-9_]*)\s*:\s*(.*)$/i);
+    if (fieldMatch && SEMANTIC_ANSWER_FIELDS.has(fieldMatch[1].toUpperCase())) {
+      const nextKey = fieldMatch[1].toUpperCase();
+      if (Object.prototype.hasOwnProperty.call(result, nextKey)) {
+        throw new Error(`Semantic Answer field ${nextKey} is defined more than once.`);
+      }
+      currentKey = nextKey;
+      blockMode = fieldMatch[2].trim() === '|';
+      result[currentKey] = blockMode ? '' : fieldMatch[2].trim();
       continue;
     }
+
+    const unsupportedField = line.match(/^([A-Z][A-Z0-9_]*)\s*:/);
+    if (unsupportedField && !SEMANTIC_ANSWER_FIELDS.has(unsupportedField[1].toUpperCase())) {
+      throw new Error(`Unsupported Semantic Answer field ${unsupportedField[1].toUpperCase()}.`);
+    }
+
     if (!line || line.startsWith('//')) {
       if (blockMode && currentKey && result[currentKey] && !result[currentKey].endsWith('\n')) {
         result[currentKey] += '\n';
@@ -986,6 +997,7 @@ function parseSemanticAnswerSection(text) {
       ? `${result[currentKey]}${separator}${line}`
       : line;
   }
+
   Object.keys(result).forEach(key => { result[key] = String(result[key]).trim(); });
   return result;
 }

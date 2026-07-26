@@ -7,6 +7,7 @@ import {
   parseTemplate,
   resolveAnswerDependencies
 } from './template-engine.js';
+import { splitReferenceIntoPhraseUnits } from './flashcard-builder.js';
 
 export function validateTemplate(templateText, options = {}) {
   const requestedRuns = clampRuns(options.runs ?? 25);
@@ -133,13 +134,40 @@ function runSemanticStaticChecks(parsed, issues) {
     });
   });
 
+  const semanticLabels = new Set();
   semanticSources.forEach((source, index) => {
+    const sourceLabel = String(source?.LABEL || source?.ID || `Semantic task ${index + 1}`).trim();
     const strictness = String(source?.STRICTNESS || 'moderate').trim().toLowerCase();
     if (!['lenient', 'moderate', 'strict', 'exacting'].includes(strictness)) issues.push(issue(
       'error',
       'invalid-semantic-strictness',
-      `${source?.LABEL || source?.ID || `Semantic task ${index + 1}`}: STRICTNESS must be lenient, moderate, strict, or exacting.`
+      `${sourceLabel}: STRICTNESS must be lenient, moderate, strict, or exacting.`
     ));
+
+    const referenceAnswer = String(source?.REFERENCE || '').replace(/\r\n?/g, '\n').trim();
+    if (!referenceAnswer) {
+      issues.push(issue('error', 'empty-semantic-reference', `${sourceLabel} has an empty REFERENCE value.`));
+      return;
+    }
+    const phraseUnits = splitReferenceIntoPhraseUnits(referenceAnswer, source?.ID || `SEMANTIC_${index + 1}`);
+    if (!phraseUnits.length) issues.push(issue(
+      'error',
+      'unparseable-semantic-reference',
+      `${sourceLabel} could not be divided into usable reference-answer phrases.`
+    ));
+    if (referenceAnswer.length > 12000 || phraseUnits.length > 80) issues.push(issue(
+      'warning',
+      'large-semantic-reference',
+      `${sourceLabel} is very long (${phraseUnits.length} phrase units). Flashcard generation may require several Gemini requests.`
+    ));
+
+    const normalizedLabel = sourceLabel.toLocaleLowerCase();
+    if (semanticLabels.has(normalizedLabel)) issues.push(issue(
+      'warning',
+      'duplicate-semantic-label',
+      `${sourceLabel} is used by more than one semantic task. Distinct labels make generated answer fields and flashcard sources clearer.`
+    ));
+    semanticLabels.add(normalizedLabel);
   });
   if (parsed.semanticMultipleTasks && parsed.metadata.TYPE !== 'multiple-tasks') issues.push(issue(
     'warning',
@@ -502,6 +530,7 @@ function runTrialChecks(parsed, runs, issues) {
     try {
       const instance = instantiateParsedTemplate(parsed, { seed: index + 1 });
       if (parsed.multipleChoice) validateGeneratedMultipleChoice(instance);
+      if (parsed.semantic) validateGeneratedSemanticInstance(instance, parsed);
       successes += 1;
       answers.push(instance.correctValue ?? instance.answer);
       attemptCounts.push(instance.attempt);
@@ -564,6 +593,37 @@ function runTrialChecks(parsed, runs, issues) {
     },
     samples
   };
+}
+
+
+function validateGeneratedSemanticInstance(instance, parsed) {
+  const tasks = Array.isArray(instance.answers) && instance.answers.length
+    ? instance.answers
+    : [{
+        id: 'SEMANTIC_1',
+        label: instance.metadata?.TITLE || 'Semantic answer',
+        answer: instance.answer,
+        semanticConfig: instance.semanticConfig
+      }];
+
+  if (parsed.semanticMultipleTasks && tasks.length !== parsed.semanticAnswers.length) {
+    throw new Error(`Semantic task instantiation produced ${tasks.length} answer fields instead of ${parsed.semanticAnswers.length}.`);
+  }
+
+  const seenIds = new Set();
+  tasks.forEach((task, index) => {
+    const taskId = String(task.id || `SEMANTIC_${index + 1}`).trim();
+    if (seenIds.has(taskId)) throw new Error(`Semantic task identifier ${taskId} was generated more than once.`);
+    seenIds.add(taskId);
+
+    const referenceAnswer = String(task.semanticConfig?.referenceAnswer || task.answer || '').replace(/\r\n?/g, '\n').trim();
+    if (!referenceAnswer) throw new Error(`${task.label || taskId} generated an empty semantic reference answer.`);
+    if (/\{[A-Z][A-Z0-9_]*\}/.test(referenceAnswer)) {
+      throw new Error(`${task.label || taskId} generated a semantic reference answer with an unresolved placeholder.`);
+    }
+    const phrases = splitReferenceIntoPhraseUnits(referenceAnswer, taskId);
+    if (!phrases.length) throw new Error(`${task.label || taskId} generated no usable reference-answer phrases.`);
+  });
 }
 
 function runSeedChecks(parsed, issues) {

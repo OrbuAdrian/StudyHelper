@@ -59,13 +59,19 @@ import {
   translateInterface
 } from './core/i18n.js';
 import {
+  attachFlashcardSourceContext,
   buildFlashcardGenerationPrompt,
   buildQuestionFlashcardEvaluationPrompt,
+  createFlashcardGenerationBatches,
+  createFlashcardResponseSchema,
   evaluateOptionFlashcard,
   normalizeGeneratedFlashcardSet,
   normalizeQuestionFlashcardEvaluation,
+  runFlashcardBatchQueue,
+  shouldRetryFlashcardGeneration,
   splitReferenceIntoPhraseUnits,
-  validateFlashcardSourceCoverage
+  validateFlashcardSourceCoverage,
+  validateSemanticFlashcardSources
 } from './features/flashcard-builder.js';
 
 'use strict';
@@ -702,12 +708,21 @@ function validateCurrentTemplate({ silent = false } = {}) {
     try {
       const parsed = parseTemplate(text);
       if (isSemanticTemplate(parsed)) {
-        const instance = instantiateTemplate(parsed);
-        const report = { valid: true, semantic: true, instance, issues: [] };
-        lastTemplateValidation = { text, runs: 0, report };
-        renderSemanticTemplateValidation(instance);
+        const runs = Number(els.templateValidationRuns.value) || 25;
+        const report = validateTemplate(text, { runs });
+        const instance = report.sampleInstances[0] || (report.valid ? instantiateTemplate(parsed) : null);
+        lastTemplateValidation = { text, runs, report };
+        renderSemanticTemplateValidation(report, instance, parsed);
         if (!silent) {
-          toast('Semantic template ready', 'The structure and reference answer are valid. Numeric randomized validation is not required.', 'success');
+          const errors = report.issues.filter(item => item.severity === 'error').length;
+          const warnings = report.issues.filter(item => item.severity === 'warning').length;
+          toast(
+            report.valid ? t('semanticTemplateReadyTitle', state.settings.uiLanguage) : t('semanticTemplateAttentionTitle', state.settings.uiLanguage),
+            report.valid
+              ? t('semanticValidationPassed', state.settings.uiLanguage, { successes: report.trials.successes, warnings })
+              : t('semanticValidationFailed', state.settings.uiLanguage, { errors }),
+            report.valid ? 'success' : 'error'
+          );
         }
         return report;
       }
@@ -739,13 +754,54 @@ function validateCurrentTemplate({ silent = false } = {}) {
     }
   }
 
-function renderSemanticTemplateValidation(instance) {
-    const taskCount = Array.isArray(instance.answers) && instance.answers.length > 1 ? instance.answers.length : 1;
-    const strictness = taskCount > 1
-      ? instance.answers.map(item => item.semanticConfig?.strictness || 'moderate').join(', ')
-      : (instance.semanticConfig?.strictness || 'moderate');
-    els.templateValidationResult.className = 'template-validation-result success';
-    els.templateValidationResult.innerHTML = `<div class="validation-header"><div><span class="validation-status-dot"></span><strong>Semantic template is ready</strong><p>Structural check passed · numeric answer validation not required</p></div><span class="validation-run-badge">Semantic${taskCount > 1 ? ` · ${taskCount} tasks` : ''}</span></div><div class="validation-stats"><div><span>Language</span><strong>${escapeHtml(instance.metadata.LANGUAGE || state.settings.contentLanguage || 'en')}</strong></div><div><span>Strictness</span><strong>${escapeHtml(strictness)}</strong></div><div><span>Generated seed</span><strong>${escapeHtml(instance.seed)}</strong></div></div><div class="validation-empty"><span>✓</span><p>The question and ${taskCount > 1 ? `${taskCount} authoritative reference answers` : 'authoritative reference answer'} can be instantiated successfully.</p></div>`;
+function renderSemanticTemplateValidation(report, instance, parsed = null) {
+    const parsedTasks = parsed?.semanticMultipleTasks
+      ? parsed.semanticAnswers.map((source, index) => ({
+          id: source.ID || `SEMANTIC_${index + 1}`,
+          label: source.LABEL || source.ID || `Semantic task ${index + 1}`,
+          answer: source.REFERENCE || '',
+          semanticConfig: {
+            referenceAnswer: source.REFERENCE || '',
+            strictness: source.STRICTNESS || 'moderate'
+          }
+        }))
+      : [{
+          id: 'SEMANTIC_1',
+          label: parsed?.metadata?.TITLE || 'Semantic answer',
+          answer: parsed?.semanticAnswer?.REFERENCE || '',
+          semanticConfig: {
+            referenceAnswer: parsed?.semanticAnswer?.REFERENCE || '',
+            strictness: parsed?.semanticAnswer?.STRICTNESS || 'moderate'
+          }
+        }];
+    const tasks = Array.isArray(instance?.answers) && instance.answers.length
+      ? instance.answers
+      : instance
+        ? [{
+            id: 'SEMANTIC_1',
+            label: instance.metadata?.TITLE || 'Semantic answer',
+            answer: instance.answer,
+            semanticConfig: instance.semanticConfig
+          }]
+        : parsedTasks;
+    const taskCount = tasks.length;
+    const phraseCount = tasks.reduce((total, task, index) => {
+      const reference = task.semanticConfig?.referenceAnswer || task.answer || '';
+      return total + splitReferenceIntoPhraseUnits(reference, task.id || `SEMANTIC_${index + 1}`).length;
+    }, 0);
+    const strictness = tasks.map(item => item.semanticConfig?.strictness || 'moderate').join(', ');
+    const errors = report.issues.filter(item => item.severity === 'error');
+    const warnings = report.issues.filter(item => item.severity === 'warning');
+    const statusClass = report.valid ? (warnings.length ? 'warning' : 'success') : 'error';
+    const statusText = report.valid
+      ? (warnings.length ? t('semanticTemplateWarningStatus', state.settings.uiLanguage) : t('semanticTemplateReadyStatus', state.settings.uiLanguage))
+      : t('semanticTemplateErrorStatus', state.settings.uiLanguage);
+    const issuesHtml = report.issues.length
+      ? `<div class="validation-issue-list">${report.issues.map(item => `<div class="validation-issue ${escapeAttr(item.severity)}"><span>${item.severity === 'error' ? '!' : 'i'}</span><div><strong>${item.severity === 'error' ? 'Error' : 'Warning'}</strong><p>${escapeHtml(item.message)}</p></div></div>`).join('')}</div>`
+      : `<div class="validation-empty"><span>✓</span><p>${escapeHtml(t('semanticValidationClean', state.settings.uiLanguage))}</p></div>`;
+
+    els.templateValidationResult.className = `template-validation-result ${statusClass}`;
+    els.templateValidationResult.innerHTML = `<div class="validation-header"><div><span class="validation-status-dot"></span><strong>${escapeHtml(statusText)}</strong><p>${escapeHtml(t('semanticValidationMeta', state.settings.uiLanguage, { errors: errors.length, warnings: warnings.length }))}</p></div><span class="validation-run-badge">${escapeHtml(t('semanticTestsCount', state.settings.uiLanguage, { successes: report.trials.successes, requested: report.trials.requested }))}</span></div><div class="validation-stats"><div><span>${escapeHtml(t('semanticTasksLabel', state.settings.uiLanguage))}</span><strong>${taskCount}</strong></div><div><span>${escapeHtml(t('referencePhrasesLabel', state.settings.uiLanguage))}</span><strong>${phraseCount}</strong></div><div><span>${escapeHtml(t('strictness', state.settings.uiLanguage))}</span><strong>${escapeHtml(strictness)}</strong></div></div>${issuesHtml}`;
   }
 
 function renderTemplateValidation(report) {
@@ -1499,6 +1555,11 @@ function buildFlashcardSourceBlocks(templateIds) {
   templateIds.forEach(templateId => {
     const template = byId.get(templateId);
     if (!template) return;
+    const templateReport = validateTemplate(template.text || '', { runs: 5 });
+    if (!templateReport.valid) {
+      const firstError = templateReport.issues.find(item => item.severity === 'error');
+      throw new Error(`${template.name || 'Semantic template'} is not ready for flashcards: ${firstError?.message || 'template validation failed'}`);
+    }
     const instance = instantiateTemplate(template.text || '');
     if (instance.kind !== 'semantic') return;
     const language = ['en', 'ro'].includes(String(instance.metadata?.LANGUAGE || '').toLowerCase())
@@ -1540,7 +1601,199 @@ function buildFlashcardSourceBlocks(templateIds) {
     });
   });
   if (!sources.length) throw new Error('The selected templates did not produce any semantic reference answers.');
-  return { sources, snapshots };
+  const validated = validateSemanticFlashcardSources(sources);
+  return { sources: validated.sources, phraseSources: validated.phraseSources, snapshots };
+}
+
+function limitFlashcardDiagnosticText(value, limit = 30000) {
+  const text = String(value || '');
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n\n[Diagnostic text truncated after ${limit} characters.]`;
+}
+
+function createFlashcardBatchDiagnostics(batch, type) {
+  return {
+    batchId: batch.id || '',
+    batchLabel: batch.label || '',
+    type,
+    parsedSources: (batch.sources || []).map(source => ({
+      sourceKey: source.sourceKey || '',
+      templateName: source.templateName || '',
+      taskLabel: source.taskLabel || '',
+      language: source.language || 'en',
+      question: source.question || '',
+      referenceAnswer: source.referenceAnswer || '',
+      phrases: (source.phrases || []).map(phrase => ({
+        sourceKey: phrase.sourceKey || '',
+        text: phrase.text || ''
+      }))
+    })),
+    attempts: []
+  };
+}
+
+function diagnosticFlashcardsFromPayload(raw) {
+  const cards = Array.isArray(raw?.flashcards || raw?.cards) ? (raw.flashcards || raw.cards) : [];
+  return cards.map((card, index) => ({
+    index: index + 1,
+    front: card?.front ?? card?.question ?? card?.statement ?? '',
+    expectedAnswer: card?.expectedAnswer ?? card?.answer ?? card?.correctOption ?? '',
+    options: Array.isArray(card?.options) ? card.options : [],
+    explanation: card?.explanation ?? '',
+    sourceKeys: Array.isArray(card?.sourceKeys) ? card.sourceKeys : []
+  }));
+}
+
+function attachFlashcardDiagnostics(error, diagnostics) {
+  const target = error instanceof Error ? error : new Error(String(error || 'Flashcard generation failed.'));
+  target.flashcardDiagnostics = diagnostics;
+  return target;
+}
+
+async function requestFlashcardBatch({ title, type, batch }) {
+  const sourceKeys = batch.phraseSources.map(source => source.sourceKey);
+  const responseSchema = createFlashcardResponseSchema(type, sourceKeys);
+  const basePrompt = buildFlashcardGenerationPrompt({ title, type, sources: batch.sources });
+  const diagnostics = createFlashcardBatchDiagnostics(batch, type);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const attemptDiagnostic = {
+      attempt,
+      api: null,
+      rawResponse: '',
+      parsedFlashcards: [],
+      error: ''
+    };
+    diagnostics.attempts.push(attemptDiagnostic);
+
+    try {
+      const retryNote = attempt === 1
+        ? ''
+        : `
+
+The previous response could not be accepted because: ${String(lastError?.message || 'invalid structured output')}
+Regenerate this batch from scratch. Return one complete JSON object, cover every supplied source key, and keep the response concise.`;
+      const result = await callGemini(`${basePrompt}${retryNote}`, true, {
+        maxOutputTokens: 6000,
+        responseSchema,
+        schemaFallback: true,
+        jsonCompatibilityFallback: true,
+        returnDiagnostics: true,
+        temperature: 0.15
+      });
+      const responseText = typeof result === 'string' ? result : result.text;
+      attemptDiagnostic.api = typeof result === 'string' ? null : result.diagnostics;
+      attemptDiagnostic.rawResponse = limitFlashcardDiagnosticText(responseText);
+
+      const raw = parseJsonResponse(responseText);
+      attemptDiagnostic.parsedFlashcards = diagnosticFlashcardsFromPayload(raw);
+      const defaultLanguage = batch.sources.every(source => source.language === batch.sources[0].language)
+        ? batch.sources[0].language
+        : 'en';
+      const normalized = normalizeGeneratedFlashcardSet(raw, {
+        title,
+        type,
+        language: defaultLanguage,
+        idFactory: () => uid()
+      });
+      validateFlashcardSourceCoverage(normalized.flashcards, batch.phraseSources);
+      return normalized.flashcards;
+    } catch (error) {
+      lastError = error;
+      attemptDiagnostic.error = String(error?.message || error);
+      if (!attemptDiagnostic.api && error?.geminiDiagnostics) {
+        attemptDiagnostic.api = error.geminiDiagnostics;
+      }
+      if (!attemptDiagnostic.rawResponse && error?.geminiDiagnostics?.responseText) {
+        attemptDiagnostic.rawResponse = limitFlashcardDiagnosticText(error.geminiDiagnostics.responseText);
+      }
+      if (!shouldRetryFlashcardGeneration(error)) {
+        throw attachFlashcardDiagnostics(error, diagnostics);
+      }
+    }
+  }
+
+  throw attachFlashcardDiagnostics(
+    lastError || new Error('Gemini did not return a valid flashcard batch.'),
+    diagnostics
+  );
+}
+
+async function requestFlashcardGeneration({ title, type, sources, phraseSources, onProgress = null }) {
+  const planned = createFlashcardGenerationBatches(sources);
+  const queueResult = await runFlashcardBatchQueue(
+    planned.batches,
+    batch => requestFlashcardBatch({ title, type, batch }),
+    { onProgress }
+  );
+  const generatedCards = queueResult.results;
+  const total = queueResult.total;
+
+  const mergedByContent = new Map();
+  generatedCards.forEach(card => {
+    const contentKey = `${card.type}|${card.language || 'en'}|${normalizeText(card.front)}|${normalizeText(card.expectedAnswer)}`;
+    const existing = mergedByContent.get(contentKey);
+    if (existing) {
+      existing.sourceKeys = [...new Set([...(existing.sourceKeys || []), ...(card.sourceKeys || [])])];
+      if (!existing.explanation && card.explanation) existing.explanation = card.explanation;
+    } else {
+      mergedByContent.set(contentKey, card);
+    }
+  });
+
+  const flashcards = [...mergedByContent.values()];
+  const attached = attachFlashcardSourceContext(flashcards, phraseSources);
+  validateFlashcardSourceCoverage(flashcards, phraseSources);
+
+  return {
+    normalized: { title, type, flashcards },
+    phraseByKey: attached.phraseByKey,
+    batchCount: total
+  };
+}
+
+function renderFlashcardGenerationDiagnostics(error) {
+  const diagnostics = error?.flashcardDiagnostics || error?.cause?.flashcardDiagnostics;
+  if (!diagnostics) return '';
+
+  const sources = (diagnostics.parsedSources || []).map((source, index) => {
+    const phrases = (source.phrases || []).map(phrase => `<li><code>${escapeHtml(phrase.sourceKey)}</code><span>${escapeHtml(phrase.text)}</span></li>`).join('');
+    return `<article class="flashcard-diagnostic-source">
+      <h5>${escapeHtml(source.taskLabel || source.templateName || `Semantic source ${index + 1}`)}</h5>
+      <p><b>Source key:</b> <code>${escapeHtml(source.sourceKey || '')}</code> · <b>Language:</b> ${escapeHtml(source.language || '')}</p>
+      <details><summary>Parsed question</summary><pre>${escapeHtml(source.question || '')}</pre></details>
+      <details open><summary>Parsed reference answer</summary><pre>${escapeHtml(source.referenceAnswer || '')}</pre></details>
+      <details><summary>Parsed phrase units (${source.phrases?.length || 0})</summary><ol>${phrases || '<li>No phrase units parsed.</li>'}</ol></details>
+    </article>`;
+  }).join('');
+
+  const attempts = (diagnostics.attempts || []).map(attempt => {
+    const apiCalls = (attempt.api?.attempts || []).map(call => `<li>
+      <b>${escapeHtml(call.mode || 'request')}</b> — HTTP ${escapeHtml(call.httpStatus || 0)}${call.apiStatus ? ` · ${escapeHtml(call.apiStatus)}` : ''}
+      ${call.message ? `<pre>${escapeHtml(call.message)}</pre>` : ''}
+    </li>`).join('');
+    const parsedCards = attempt.parsedFlashcards?.length
+      ? `<pre>${escapeHtml(JSON.stringify(attempt.parsedFlashcards, null, 2))}</pre>`
+      : '<p>No flashcard objects were parsed from this attempt.</p>';
+    const rawResponse = attempt.rawResponse
+      ? `<pre>${escapeHtml(attempt.rawResponse)}</pre>`
+      : '<p>No Gemini response body was received for this attempt.</p>';
+    return `<article class="flashcard-diagnostic-attempt">
+      <h5>Generation attempt ${attempt.attempt}</h5>
+      ${attempt.error ? `<p class="flashcard-diagnostic-error"><b>Error:</b> ${escapeHtml(attempt.error)}</p>` : ''}
+      <details open><summary>API request attempts</summary><ul>${apiCalls || '<li>No API diagnostic information was returned.</li>'}</ul></details>
+      <details><summary>Flashcards parsed from the response</summary>${parsedCards}</details>
+      <details><summary>Raw Gemini response</summary>${rawResponse}</details>
+    </article>`;
+  }).join('');
+
+  return `<details class="flashcard-generation-diagnostics" open>
+    <summary>Generation diagnostics</summary>
+    <p>This author-side report shows what Study Forge parsed from the semantic template and what Gemini returned. It does not include the API key.</p>
+    <section><h4>Parsed semantic sources</h4>${sources || '<p>No semantic sources were captured.</p>'}</section>
+    <section><h4>Gemini attempts</h4>${attempts || '<p>No Gemini attempts were captured.</p>'}</section>
+  </details>`;
 }
 
 async function generateFlashcards() {
@@ -1553,16 +1806,19 @@ async function generateFlashcards() {
   els.flashcardPreview.className = 'loading-state';
   els.flashcardPreview.innerHTML = '<div><div class="loading-spinner"></div><strong>Building flashcards</strong><p>Gemini is deciding which statements should be combined or split for active recall.</p></div>';
   try {
-    const { sources, snapshots } = buildFlashcardSourceBlocks(templateIds);
-    const raw = parseJsonResponse(await callGemini(buildFlashcardGenerationPrompt({ title, type, sources }), true, { maxOutputTokens: 8000 }));
-    const normalized = normalizeGeneratedFlashcardSet(raw, {
+    const { sources, phraseSources, snapshots } = buildFlashcardSourceBlocks(templateIds);
+    const { normalized, phraseByKey, batchCount } = await requestFlashcardGeneration({
       title,
       type,
-      language: sources.every(source => source.language === sources[0].language) ? sources[0].language : 'en',
-      idFactory: () => uid()
+      sources,
+      phraseSources,
+      onProgress: ({ completed, total, label, phase }) => {
+        const action = phase === 'split'
+          ? 'A large response was divided into smaller calls.'
+          : `Processing ${escapeHtml(label || 'semantic source')}.`;
+        els.flashcardPreview.innerHTML = `<div><div class="loading-spinner"></div><strong>Building flashcards · ${completed}/${total}</strong><p>${action}</p></div>`;
+      }
     });
-    const phraseSources = sources.flatMap(source => source.phrases.map(phrase => ({ ...phrase, language: source.language })));
-    const { phraseByKey } = validateFlashcardSourceCoverage(normalized.flashcards, phraseSources);
     normalized.flashcards.forEach(card => {
       const sourceLanguages = new Set(card.sourceKeys.map(key => phraseByKey.get(key).language));
       if (sourceLanguages.size === 1) card.language = [...sourceLanguages][0];
@@ -1580,10 +1836,10 @@ async function generateFlashcards() {
     els.flashcardSetTitle.value = state.currentFlashcardSet.title;
     renderFlashcardPreview();
     saveState();
-    toast('Flashcards generated', `${normalized.flashcards.length} ${type === 'option' ? 'option' : 'question'} flashcard${normalized.flashcards.length === 1 ? '' : 's'} created.`, 'success');
+    toast('Flashcards generated', `${normalized.flashcards.length} ${type === 'option' ? 'option' : 'question'} flashcard${normalized.flashcards.length === 1 ? '' : 's'} created across ${batchCount} Gemini call${batchCount === 1 ? '' : 's'}.`, 'success');
   } catch (error) {
-    els.flashcardPreview.className = 'empty-state';
-    els.flashcardPreview.innerHTML = `<span>!</span><strong>Flashcard generation failed</strong><p>${escapeHtml(friendlyApiError(error))}</p>`;
+    els.flashcardPreview.className = 'flashcard-generation-error';
+    els.flashcardPreview.innerHTML = `<div class="empty-state compact"><span>!</span><strong>Flashcard generation failed</strong><p>${escapeHtml(friendlyApiError(error))}</p></div>${renderFlashcardGenerationDiagnostics(error)}`;
     toast('Flashcard generation failed', friendlyApiError(error), 'error');
   } finally {
     setButtonLoading(els.generateFlashcardsButton, false);
@@ -2093,6 +2349,11 @@ async function callGemini(prompt, jsonMode = false, options = {}) {
       prompt,
       jsonMode,
       maxOutputTokens: options.maxOutputTokens,
+      responseSchema: options.responseSchema,
+      temperature: options.temperature,
+      schemaFallback: options.schemaFallback,
+      jsonCompatibilityFallback: options.jsonCompatibilityFallback,
+      returnDiagnostics: options.returnDiagnostics,
       apiKey: getApiKey(),
       model: state.settings.model || 'gemini-2.5-flash'
     });

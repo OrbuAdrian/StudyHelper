@@ -1387,3 +1387,91 @@
 .flashcard-result-list strong,
 .flashcard-result-list p { margin: 0; }
 .flashcard-result-list p { margin-top: 5px; color: var(--muted); font-size: .85rem; }
+
+.flashcard-generation-error {
+  display: grid;
+  gap: 16px;
+}
+
+.flashcard-generation-diagnostics {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.flashcard-generation-diagnostics > summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.flashcard-generation-diagnostics > p {
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+.flashcard-generation-diagnostics section {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.flashcard-generation-diagnostics h4,
+.flashcard-generation-diagnostics h5,
+.flashcard-generation-diagnostics p {
+  margin: 0;
+}
+
+.flashcard-diagnostic-source,
+.flashcard-diagnostic-attempt {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised, var(--surface));
+}
+
+.flashcard-generation-diagnostics details {
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+}
+
+.flashcard-generation-diagnostics details > summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: .85rem;
+}
+
+.flashcard-generation-diagnostics pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 9px 0 0;
+  padding: 11px;
+  border-radius: 10px;
+  background: var(--code-bg, rgba(15, 23, 42, .06));
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.flashcard-generation-diagnostics ol,
+.flashcard-generation-diagnostics ul {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 0;
+  padding-left: 22px;
+}
+
+.flashcard-generation-diagnostics li span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.flashcard-diagnostic-error {
+  color: var(--danger);
+}

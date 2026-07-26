@@ -621,3 +621,20 @@ The original v1.1 sections, scalar placeholders, ranges, mappings, formulas, con
 ## Semantic templates and flashcards
 
 Saved templates that use `## Semantic Answer` or `## Semantic Answers` automatically appear in Flashcard Builder. No additional flashcard syntax is required. The builder instantiates the template, resolves its authoritative reference answer or task answers, and lets Gemini decide whether source phrases should be combined into one card or divided into several cards. Deterministic templates and template-generated multiple-choice exercises are not offered as flashcard sources.
+## Semantic validation for flashcard sources
+
+The Template Engine validator applies additional checks to semantic templates because their reference answers may later be used by Flashcard Builder.
+
+For `## Semantic Answer`, the single `REFERENCE:` value is validated as one source. For `## Semantic Answers`, every task block is validated independently and becomes a separate flashcard source. The old `multiple-answer` spelling remains only a migration alias for deterministic content; new semantic multi-response templates use `TYPE: multiple-tasks`.
+
+The validator reports blocking errors for:
+
+- a missing or empty `REFERENCE:`;
+- a duplicate semantic field such as two `REFERENCE:` entries in one task;
+- an unsupported uppercase semantic field name;
+- unresolved placeholders in a generated reference answer;
+- duplicate task or phrase-source identifiers;
+- a reference answer that cannot produce any usable phrase units.
+
+The test-count selector also applies to semantic templates. These runs instantiate randomized definitions, mappings, collections, formulas, and constraints so every generated reference answer can be checked. They do not perform mathematical answer validation or Gemini factual grading.
+

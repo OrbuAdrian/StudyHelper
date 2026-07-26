@@ -145,16 +145,81 @@ export function parseJsonResponse(raw) {
     .replace(/\s*```$/i, '')
     .trim();
 
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
-    }
-    throw new Error('The AI response was not valid JSON. Please regenerate it.');
+  const candidates = [cleaned];
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const extracted = cleaned.slice(firstBrace, lastBrace + 1);
+    if (extracted !== cleaned) candidates.push(extracted);
   }
+
+  const repaired = repairCommonJsonFormatting(candidates[candidates.length - 1]);
+  if (repaired && !candidates.includes(repaired)) candidates.push(repaired);
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const detail = String(lastError?.message || 'unknown JSON syntax error');
+  throw new Error(`The AI response was incomplete or malformed JSON: ${detail}`);
+}
+
+function repairCommonJsonFormatting(value) {
+  const source = String(value || '').replace(/,\s*([}\]])/g, '$1');
+  if (!source) return source;
+
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  const nextNonWhitespace = start => {
+    let index = start;
+    while (index < source.length && /\s/.test(source[index])) index += 1;
+    return { index, character: source[index] || '' };
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    result += character;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (character !== '"') continue;
+      inString = false;
+
+      const next = nextNonWhitespace(index + 1);
+      if (next.character === '"' || next.character === '{' || next.character === '[') {
+        result += ',';
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (character === '}' || character === ']') {
+      const next = nextNonWhitespace(index + 1);
+      if (next.character === '{' || next.character === '"' || next.character === '[') {
+        result += ',';
+      }
+    }
+  }
+
+  return result;
 }
 
 export function friendlyApiError(error) {

@@ -45,6 +45,8 @@ Then open `http://localhost:8080`. If startup fails, the page now displays a vis
 - Question flashcards with Gemini-graded short answers.
 - Option flashcards with one blank, stored choices, and local validation.
 - Gemini-controlled splitting and combining of reference-answer phrases according to context.
+- Portable schema-constrained flashcard JSON with schema-free and plain-text compatibility fallbacks, local validation, common-format recovery, and automatic retries.
+- Semantic-template flashcard-readiness validation for single and multiple semantic task references.
 - Mixed-language quizzes and flashcard sets.
 - Local browser persistence and TXT/JSON export.
 
@@ -108,7 +110,7 @@ Two set types are available:
 - **Question flashcards** rewrite source statements as direct questions with a short expected answer. Learner responses are semantically checked by Gemini against a private grading reference. Without Gemini, the card is answerable but ungradable.
 - **Option flashcards** rewrite source statements with exactly one `____` blank. Each card stores 3–5 distinct options and one correct option, so checking is local and does not require Gemini.
 
-Generated sets may be previewed, saved in the library, exported as TXT or JSON, and reviewed one card at a time. Every card stores source keys pointing back to the semantic template task blocks used to create it. Full semantic reference answers remain hidden during learner review. See [`FLASHCARDS.md`](FLASHCARDS.md).
+Generated sets may be previewed, saved in the library, exported as TXT or JSON, and reviewed one card at a time. Every card stores source keys pointing back to the semantic template task blocks used to create it. Full semantic reference answers remain hidden during learner review. If generation fails, an author-side diagnostic panel shows parsed references, phrase units, API fallback attempts, raw responses, and any partially parsed cards. See [`FLASHCARDS.md`](FLASHCARDS.md).
 
 ## Template Format v2
 
